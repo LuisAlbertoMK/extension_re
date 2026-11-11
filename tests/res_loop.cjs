@@ -75,6 +75,11 @@ const T = shim.load('resources.js',
           shim.CUR = dialog();
           return Promise.resolve({ dataUrl: 'shot' });
         }
+        if (shots.length === 0 || shotAt >= shots.length) {
+          const { d } = base(W, H, 99);
+          shim.CUR = { w: W, h: H, data: d };
+          return Promise.resolve({ dataUrl: 'shot' });
+        }
         const i = Math.min(shotAt++, shots.length - 1);
         shim.CUR = shots[i];
         return Promise.resolve({ dataUrl: 'shot' });

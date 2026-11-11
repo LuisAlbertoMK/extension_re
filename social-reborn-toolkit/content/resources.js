@@ -303,12 +303,10 @@
   }
 
   async function cycle() {
-    let clicked = 0; dialogTries = 0; stats.cycles++;
-    // One click queues every bubble of that type, but the dialog only opens for the
-    // building you click, so each queued building needs its own click and its own
-    // "Elige el tiempo" answer. `queue` holds the positions still owed an answer.
+    stats.cycles++;
+    dialogTries = 0;
     const doneTypes = new Set();
-    let queue = [];
+    let queue = [];            // queued positions, one per bubble of a clicked type
     for (let iter = 0; iter < 40 && running; iter++) {
       status = queue.length ? 'assigning times' : 'scanning';
       const r = await scan();
@@ -319,21 +317,29 @@
           // Give up on this run instead of stopping the session, so the collector is
           // never left off.
           lastError = 'cannot pick the gather time (check Calibrate)';
-          return clicked;
+          return;
         }
         await chooseTime();
         continue;
       }
       if (queue.length) {
-        await humanClick(queue.shift());          // opens that building's dialog
+        const p = queue.shift();
+        await humanClick(p);                      // opens that building's dialog
         await sleep(rand(1000, 1200));
+        // The queued marker can be slightly off (the game shifts it a few px); if the
+        // dialog did not open, retry the same spot once before giving up on it.
+        const r2 = await scan();
+        if (!r2.dialog) {
+          await humanClick(p);
+          await sleep(rand(1000, 1200));
+        }
         continue;
       }
       const it = nextItem(r.items.filter(x => !doneTypes.has(x.type)));
       if (!it) break;
       await sleep(rand(CFG.gapMin, CFG.gapMax));
       if (await humanClick(it)) {
-        stats[it.type]++; clicked++;
+        stats[it.type]++;
         doneTypes.add(it.type);
         // That single click queued every other bubble of this type.
         queue = r.items.filter(x => x.type === it.type && x !== it).map(x => ({ x: x.x, y: x.y }));
@@ -342,7 +348,7 @@
         await sleep(rand(1000, 1200));              // the dialog is up in under a second
       }
     }
-    return clicked;
+    return;
   }
 
   async function tick(my) {
