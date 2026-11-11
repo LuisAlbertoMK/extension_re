@@ -19,6 +19,17 @@ function bubble(x, y, size, rgb) {
   return { w: W, h: H, data: d };
 }
 
+// Four gold bubbles: one click queues them all, but each one needs its own
+// gather-time assignment.
+function fourGoldFrame() {
+  const { d } = base(W, H, 12);
+  [[260, 220], [520, 220], [780, 220], [1040, 300]].forEach(([x, y]) => {
+    rect(d, W, x, y, 40, 40, 250, 250, 250);
+    rect(d, W, x + 14, y + 14, 12, 12, 220, 190, 40);
+  });
+  return { w: W, h: H, data: d };
+}
+
 // Two meat bubbles and one gold bubble in a single frame: one click per type is
 // enough because collecting one bubble queues every bubble of that resource.
 function multiFrame() {
@@ -136,4 +147,14 @@ function assert(cond, msg) {
   assert(T.stats.meat - meat0 === 1, `one meat click covers both meat bubbles (${T.stats.meat - meat0})`);
   assert(T.stats.gold - gold0 === 1, `the gold bubble is collected too (${T.stats.gold - gold0})`);
   assert(clicks - clicks0 === 2, `one click per resource type, not per bubble (${clicks - clicks0})`);
+
+  // --- one assignment per queued bubble --------------------------------------
+  shots = [fourGoldFrame(), dialog()];
+  shotAt = 0;
+  const chosen0 = T.stats.chosen;
+  T.start();
+  await wait(10000);
+  T.stop();
+  assert(T.stats.chosen - chosen0 === 4,
+    `four bubbles mean four assignments (${T.stats.chosen - chosen0})`);
 })();

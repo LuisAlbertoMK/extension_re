@@ -294,24 +294,31 @@
     let clicked = 0; dialogTries = 0; stats.cycles++;
     // One click collects every bubble of that resource type, so a type is clicked at
     // most once per run: clicking a second wood bubble would land on an already
-    // collected, empty spot.
+    // collected, empty spot. Placing them is per bubble though, so N bubbles of a type
+    // mean N gather-time dialogs to answer.
     const doneTypes = new Set();
+    let assignmentsLeft = 0;
+    let assignmentsTotal = 0;
     for (let iter = 0; iter < 40 && running; iter++) {
       status = 'scanning';
       const r = await scan();
       if (iter === 0) stats.found = r.items.length;
       if (liveOverlay) drawOverlay(r);
       if (r.dialog) {
-        if (++dialogTries > 3) {
+        if (++dialogTries > Math.max(3, assignmentsTotal)) {
           // Give up on this run instead of stopping the session: the dialog closes on
           // its own and the next cycle retries, so the collector is never left off.
           lastError = 'cannot pick the gather time (check Calibrate)';
           return clicked;
         }
-        await chooseTime(); continue;
+        await chooseTime(); assignmentsLeft = Math.max(0, assignmentsLeft - 1); continue;
       }
       const it = nextItem(r.items.filter(x => !doneTypes.has(x.type)));
       if (!it) break;
+      // The single click queues every bubble of that type, so count them now: each one
+      // needs its own gather-time assignment.
+      assignmentsTotal = r.items.filter(x => x.type === it.type).length;
+      assignmentsLeft = assignmentsTotal;
       await sleep(rand(CFG.gapMin, CFG.gapMax));
       if (await humanClick(it)) {
         stats[it.type]++; clicked++;
