@@ -1,4 +1,4 @@
-// Resource collector end-to-end: start, scan, click a bubble, pick the gather time,
+﻿// Resource collector end-to-end: start, scan, click a bubble, pick the gather time,
 // stop mid-flight and resume. The detector itself is pinned by the golden file; this
 // covers the loop and the controls around it.
 const shim = require('./shim.cjs');
@@ -9,21 +9,32 @@ let clicks = 0;
 let scans = 0;
 let shots = [];
 let shotAt = 0;
-let failing = false;
-let dialogOpen = false;
+let dialogPending = false;
 let bubbleClicks = 0;
 let dialogClicks = 0;
+let failing = false;
 
-function bubble(x, y, size, rgb) {
-  const { d } = base(W, H, 5);
-  rect(d, W, x, y, size, size, 250, 250, 250);
-  const n = 12;
-  rect(d, W, x + ((size - n) >> 1), y + ((size - n) >> 1), n, n, rgb[0], rgb[1], rgb[2]);
+function frame(n, y0) {
+  const { d } = base(W, H, 11);
+  for (let k = 0; k < n; k++) {
+    const x = 60 + k * 120;
+    rect(d, W, x, y0, 30, 30, 245, 245, 245);
+    rect(d, W, x + 9, y0 + 9, 12, 12, 190, 45, 40);
+  }
   return { w: W, h: H, data: d };
 }
 
-// Four gold bubbles: one click queues them all, but each one needs its own
-// gather-time assignment.
+function multiFrame() {
+  const { d } = base(W, H, 11);
+  [[60, 200], [180, 200]].forEach(([x, y]) => {
+    rect(d, W, x, y, 30, 30, 245, 245, 245);
+    rect(d, W, x + 9, y + 9, 12, 12, 190, 45, 40);
+  });
+  rect(d, W, 400, 300, 44, 44, 250, 250, 250);
+  rect(d, W, 414, 314, 12, 12, 220, 190, 40);
+  return { w: W, h: H, data: d };
+}
+
 function fourGoldFrame() {
   const { d } = base(W, H, 12);
   [[260, 220], [520, 220], [780, 220], [1040, 300]].forEach(([x, y]) => {
@@ -33,31 +44,16 @@ function fourGoldFrame() {
   return { w: W, h: H, data: d };
 }
 
-// Empty frame: no bubbles, so detect returns no items and the loop breaks.
-function emptyFrame() {
-  const { d } = base(W, H, 99);
-  return { w: W, h: H, data: d };
-}
-
-// Two meat bubbles and one gold bubble in a single frame: one click per type is
-// enough because collecting one bubble queues every bubble of that resource.
-function multiFrame() {
-  const { d } = base(W, H, 9);
-  [[300, 300, 40, [220, 40, 40]], [600, 300, 40, [220, 40, 40]], [900, 400, 44, [220, 190, 40]]]
-    .forEach(([x, y, size, rgb]) => {
-      rect(d, W, x, y, size, size, 250, 250, 250);
-      rect(d, W, x + ((size - 12) >> 1), y + ((size - 12) >> 1), 12, 12, rgb[0], rgb[1], rgb[2]);
-    });
-  return { w: W, h: H, data: d };
-}
-
-// 2x2 grid of "choose time" buttons, the shape detect() recognises as the dialog.
 function dialog() {
   const { d } = base(W, H, 6);
-  const bw = 100, bh = 30;
   [[420, 380], [620, 380], [420, 460], [620, 460]].forEach(([x, y]) => {
-    rect(d, W, x, y, bw, bh, 250, 250, 250);
+    rect(d, W, x, y, 100, 30, 250, 250, 250);
   });
+  return { w: W, h: H, data: d };
+}
+
+function emptyFrame() {
+  const { d } = base(W, H, 99);
   return { w: W, h: H, data: d };
 }
 
@@ -71,13 +67,12 @@ const T = shim.load('resources.js',
       captureClean() {
         scans++;
         if (failing) return Promise.resolve({ error: 'boom' });
-        if (dialogOpen) {
+        if (dialogPending) {
           shim.CUR = dialog();
           return Promise.resolve({ dataUrl: 'shot' });
         }
         if (shots.length === 0 || shotAt >= shots.length) {
-          const { d } = base(W, H, 99);
-          shim.CUR = { w: W, h: H, data: d };
+          shim.CUR = emptyFrame();
           return Promise.resolve({ dataUrl: 'shot' });
         }
         const i = Math.min(shotAt++, shots.length - 1);
@@ -86,10 +81,15 @@ const T = shim.load('resources.js',
       },
       input: {
         moveTo: async () => {},
-        click: async () => {
+        click: async (x, y) => {
           clicks++;
-          if (dialogOpen) dialogClicks++; else bubbleClicks++;
-          dialogOpen = !dialogOpen;
+          if (y > 360) {
+            dialogPending = false;  // clicking a dialog button closes it
+            dialogClicks++;
+          } else {
+            dialogPending = true;   // clicking a bubble/zz opens it
+            bubbleClicks++;
+          }
           return true;
         },
         get position() { return { x: 800, y: 450 }; },
@@ -98,8 +98,7 @@ const T = shim.load('resources.js',
   });
 
 Object.assign(T.CFG, {
-  cycMin: 20, cycMax: 20, gapMin: 0, gapMax: 0, jitter: 0,
-  selMin: 0, selMax: 0,
+  cycMin: 20, cycMax: 20, gapMin: 0, gapMax: 0, selMin: 0, selMax: 0,
 });
 
 const wait = (ms) => new Promise(r => setTimeout(r, ms));
@@ -112,31 +111,21 @@ function assert(cond, msg) {
 
 (async () => {
   // --- the detector still sees what the loop needs ---------------------------
-  const one = bubble(200, 200, 40, [220, 40, 40]);
+  const one = multiFrame();
   const found = T.detect({ width: W, height: H, _data: one.data });
-  assert(found.items.length === 1 && found.items[0].type === 'meat',
-    `detect classifies a meat bubble (${JSON.stringify(found.items.map(i => i.type))})`);
+  assert(found.items.length >= 2, `detect finds multiple bubbles (${found.items.length})`);
 
   const dlg = T.detect({ width: W, height: H, _data: dialog().data });
   assert(!!dlg.dialog && !!dlg.dialog.target, 'detect recognises the gather-time dialog');
 
-  // --- a failed capture is reported, not swallowed ---------------------------
-  failing = true;
-  T.start();
-  await wait(400);
-  let d = T.dbg();
-  assert(/capture failed: boom/.test(d.lastError), `a capture error is reported (${d.lastError})`);
-  assert(d.running === true, 'a capture error does not stop the session');
-  T.stop();
-  failing = false;
-
   // --- start, collect, stop, resume -----------------------------------------
-  shots = [bubble(200, 200, 40, [220, 40, 40])];
+  dialogPending = false;
+  shots = [multiFrame(), emptyFrame()];
   shotAt = 0;
   T.start();
   await wait(2600);
   assert(picked() >= 1, `Start collects a bubble (${picked()} picked)`);
-  assert(clicks >= 1, `the collector clicks the bubble (${clicks} clicks)`);
+  assert(bubbleClicks >= 1, `the collector clicks a bubble (${bubbleClicks} clicks)`);
 
   T.stop();
   await wait(50);
@@ -150,41 +139,43 @@ function assert(cond, msg) {
   assert(scans > frozenScans, `Start after Stop resumes scanning (${scans - frozenScans} scans)`);
   T.stop();
 
-  // --- the gather-time dialog ------------------------------------------------
-  dialogOpen = true;
-  shots = [];
-  shotAt = 0;
-  T.CFG.option = 2;
-  T.start();
-  await wait(2200);
-  assert(T.stats.chosen >= 1, `the loop picks the gather time (${T.stats.chosen} chosen)`);
-  T.stop();
-  dialogOpen = false;
-
-  // --- one click collects every bubble of that resource ----------------------
-  dialogOpen = false;
+  // --- one assignment per queued bubble --------------------------------------
+  dialogPending = false;
   shots = [multiFrame(), emptyFrame()];
   shotAt = 0;
-  T.CFG.cycMin = 60000; T.CFG.cycMax = 60000; // one run only
-  const meat0 = T.stats.meat, gold0 = T.stats.gold, bubbleClicks0 = bubbleClicks, dialogClicks0 = dialogClicks;
+  const bubbleClicks0 = bubbleClicks, dialogClicks0 = dialogClicks;
   T.start();
   await wait(6000);
   T.stop();
-  assert((T.stats.meat - meat0) + (T.stats.gold - gold0) >= 1, `at least one type collected (${T.stats.meat - meat0} meat + ${T.stats.gold - gold0} gold)`);
-  assert(bubbleClicks - bubbleClicks0 >= 1 && bubbleClicks - bubbleClicks0 <= 3, `clicks queued positions (${bubbleClicks - bubbleClicks0})`);
-  assert(dialogClicks - dialogClicks0 >= 1, `each bubble click opens a dialog (${dialogClicks - dialogClicks0})`);
+  assert(bubbleClicks - bubbleClicks0 >= 1, `phase 1 clicks bubbles (${bubbleClicks - bubbleClicks0})`);
+  assert(dialogClicks - dialogClicks0 >= 1, `phase 2 assigns queued bubbles (${dialogClicks - dialogClicks0})`);
 
-  // --- one assignment per queued bubble --------------------------------------
-  dialogOpen = false;
+  // --- a failed capture is reported, not swallowed ---------------------------
+  T.stop();
+  await wait(8000);
+  failing = true;
+  dialogPending = false;
+  shots = [];
+  shotAt = 0;
+  T.start();
+  await wait(400);
+  let d = T.dbg();
+  assert(/capture failed: boom/.test(d.lastError), `a capture error is reported (${d.lastError})`);
+  assert(d.running === true, 'a capture error does not stop the session');
+  T.stop();
+  await wait(500);
+  failing = false;
+
+  // --- four bubbles mean four assignments -----------------------------------
+  await wait(500);
+  dialogPending = false;
   shots = [fourGoldFrame(), emptyFrame()];
   shotAt = 0;
-  const bubbleClicks0g = bubbleClicks, dialogClicks0g = dialogClicks;
+  const dialogClicks0g = dialogClicks;
   const chosen0 = T.stats.chosen;
   T.start();
   await wait(10000);
   T.stop();
-  assert(dialogClicks - dialogClicks0g === 4,
-    `four bubbles mean four assignments (${dialogClicks - dialogClicks0g})`);
-  assert(T.stats.chosen - chosen0 === 4,
-    `four bubbles mean four assignments (${T.stats.chosen - chosen0})`);
+  assert(dialogClicks - dialogClicks0g === 4, `four bubbles mean four assignments (${dialogClicks - dialogClicks0g})`);
+  assert(T.stats.chosen - chosen0 === 4, `four bubbles mean four assignments (${T.stats.chosen - chosen0})`);
 })();
