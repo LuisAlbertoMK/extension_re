@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { width: 264px; font-family: system-ui, -apple-system, sans-serif; background: #15151f; color: #e8e8ef; padding: 10px; }
+  .card { background: #1e1e2b; border-radius: 10px; padding: 10px; margin-bottom: 8px; }
+  .head { display: flex; align-items: center; gap: 8px; }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: #4a4a60; flex: none; transition: background .2s; }
+  .dot.on { background: #4ade80; }
+  .dot.warn { background: #fbbf24; }
+  .name { font-size: 13px; font-weight: 600; flex: 1; letter-spacing: .2px; }
+  button { font: inherit; border: 0; cursor: pointer; border-radius: 7px; transition: background .15s, color .15s; }
+  .toggle { font-size: 11px; font-weight: 600; padding: 5px 10px; background: #2f2f42; color: #cfcfe0; min-width: 68px; }
+  .toggle:hover { background: #3a3a52; }
+  .toggle.on { background: #166534; color: #dcfce7; }
+  .toggle.on:hover { background: #1a7a3e; }
+  .meta { display: flex; justify-content: space-between; align-items: center; margin-top: 7px; font-size: 11px; color: #8b8ba3; }
+  .cal { background: transparent; color: #6f6f8c; font-size: 11px; padding: 2px 4px; }
+  .cal:hover { color: #e8e8ef; }
+  .hud { width: 100%; background: #1e1e2b; color: #8b8ba3; font-size: 11px; padding: 7px; }
+  .hud:hover { background: #262638; color: #e8e8ef; }
+  .opt { background: #12121a; color: #cfcfe0; border: 1px solid #2f2f42; border-radius: 6px; font: inherit; font-size: 11px; padding: 2px 4px; }
+  .foot { font-size: 10px; color: #5a5a72; text-align: center; padding-top: 6px; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="head">
+      <span class="dot" id="meatDot"></span>
+      <span class="name">Meat</span>
+      <button class="toggle" id="meatToggle">Start</button>
+    </div>
+    <div class="meta">
+      <span id="meatStats">—</span>
+      <button class="cal" id="meatCal">🎯 calibrate</button>
+    </div>
+    <div class="meta">
+      <span>Collect</span>
+      <select class="opt" id="meatMode">
+        <option value="mixed">mixed</option>
+        <option value="drag">drag (sweep)</option>
+        <option value="click">click (one by one, 100%)</option>
+      </select>
+    </div>
+    <div class="meta">
+      <label><input type="checkbox" id="meatCustom"> Personalizar tiempos</label>
+    </div>
+    <div id="meatTiming" style="display:none">
+    <div class="meta">
+      <span>Idle gap (ms)</span>
+      <div class="row" style="margin:0;gap:4px">
+        <input class="opt" id="meat_minDelay" type="number" style="width:100%">
+        <input class="opt" id="meat_maxDelay" type="number" style="width:100%">
+      </div>
+    </div>
+    <div class="meta">
+      <span>Idle after drag (ms)</span>
+      <div class="row" style="margin:0;gap:4px">
+        <input class="opt" id="meat_dragMinDelay" type="number" style="width:100%">
+        <input class="opt" id="meat_dragMaxDelay" type="number" style="width:100%">
+      </div>
+    </div>
+    <div class="meta">
+      <span>Per-click pause (ms)</span>
+      <div class="row" style="margin:0;gap:4px">
+        <input class="opt" id="meat_clickDelayMin" type="number" style="width:100%">
+        <input class="opt" id="meat_clickDelayMax" type="number" style="width:100%">
+      </div>
+    </div>
+    <button class="hud" id="meatApply" style="margin-top:6px">Apply meat timings</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="head">
+      <span class="dot" id="woodDot"></span>
+      <span class="name">Wood</span>
+      <button class="toggle" id="woodToggle">Start</button>
+    </div>
+    <div class="meta">
+      <span id="woodStats">—</span>
+      <button class="cal" id="woodCal">🎯 calibrate</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="head">
+      <span class="dot" id="resDot"></span>
+      <span class="name">Resources</span>
+      <button class="toggle" id="resToggle">Start</button>
+    </div>
+    <div class="meta">
+      <span id="resStats">—</span>
+      <button class="cal" id="resCal">🎯 calibrate</button>
+    </div>
+    <div class="meta">
+      <span>Gather time</span>
+      <select class="opt" id="resOption">
+        <option value="0">5 min</option>
+        <option value="1">1 h</option>
+        <option value="2">4 h</option>
+        <option value="3">8 h</option>
+      </select>
+    </div>
+  </div>
+
+  <button class="hud" id="inputMode">Input: synthetic</button>
+  <button class="hud" id="captureFormat">Capture: fast (JPEG)</button>
+  <button class="hud" id="hudToggle">Toggle in-page HUD</button>
+  <div class="foot" id="foot"></div>
+
+  <script src="popup.js"></script></body>
+</html>
