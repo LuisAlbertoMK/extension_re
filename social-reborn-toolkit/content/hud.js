@@ -600,10 +600,6 @@
     } else if (document.fullscreenElement && !userHidden) {
       show(true);
     }
-    // In fullscreen only the fullscreen element's subtree is painted. If the game
-    // fullscreens the bare <canvas>, no in-page UI can render at all.
-    if (document.fullscreenElement && document.fullscreenElement.tagName === 'CANVAS') {
-    }
   }
 
   document.addEventListener('fullscreenchange', onFullscreenChange);

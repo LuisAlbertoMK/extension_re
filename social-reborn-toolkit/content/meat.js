@@ -96,6 +96,8 @@
   let loopToken = 0;
   let cycleBusy = false;
   let lastError = '';      // last capture/scan failure, shown in the popup
+  let errStreak = 0;       // consecutive failed cycles; MAX_ERRORS in a row stops the module
+  const MAX_ERRORS = 5;
   let liveOverlay = false; // calibration mode: keep the detection overlay updated each cycle
   let lastTargets = [];    // last detection, used to repaint after a viewport change
   let sessionEndsAt = 0;   // wall-clock deadline for the current run
@@ -324,29 +326,6 @@
           t.canvasY >= 0 && t.canvasY <= canvasRect.canvasH
         );
 
-        // Verbose diagnostics only in calibration mode. Counting red pixels for every
-        // white region is expensive (1014 regions in a busy field), so it must not run
-        // on normal cycles. Reuses the bounding boxes already computed above.
-        if (liveOverlay) {
-          const sortedRegions = whiteRegions.map(region => ({
-            size: region.size,
-            boxW: region.maxX - region.minX + 1,
-            boxH: region.maxY - region.minY + 1,
-            redInside: countRed(region.minX, region.minY, region.maxX, region.maxY),
-            minX: region.minX,
-            minY: region.minY,
-            maxX: region.maxX,
-            maxY: region.maxY
-          })).sort((a, b) => b.size - a.size);
-
-          sortedRegions.slice(0, 10).forEach((r, i) => {
-          });
-          if (validIcons.length > 0 && validIcons.length <= 25) {
-            validIcons.forEach((icon, i) => {
-            });
-          }
-        }
-
           resolve({
             whiteRegionCount: whiteRegions.length,
             validCount: validIcons.length,
@@ -543,7 +522,6 @@
       if (await input.click(p.x, p.y)) {
         stats.collected++;
         done.push(`${t.canvasX},${t.canvasY}`);
-      } else {
       }
 
       // Pause between clicks, on top of the travel time. Occasional long pause so the
@@ -578,14 +556,17 @@
       const response = await capture('jpeg');
       if (!response) {
         lastError = 'capture returned nothing';
+        errStreak++;
         return;
       }
       if (response.error) {
         lastError = `capture failed: ${response.error}`;
+        errStreak++;
         return;
       }
 
       let result = await analyzeScreenshot(response.dataUrl);
+      errStreak = 0;
 
       // JPEG's 4:2:0 chroma subsampling softens the thin white border of the icon, so a
       // frame that finds nothing gets a lossless re-check before we call the field empty.
@@ -634,7 +615,6 @@
 
         if (filteredTargets.length === 0) {
           stats.cycles++;
-          broadcastStats();
           return;
         }
 
@@ -661,10 +641,10 @@
       }
 
       stats.cycles++;
-      broadcastStats();
     } catch (e) {
       // A failed decode or click used to vanish here, leaving the run looking empty.
       lastError = String((e && e.message) || e);
+      errStreak++;
     }
   }
 
@@ -672,6 +652,7 @@
     if (running) return;
     running = true;
     stopReason = '';
+    errStreak = 0;
     zeroStreak = 0;
     usedDragThisCycle = false;
     const my = ++loopToken;
@@ -739,6 +720,10 @@
       cycleBusy = false;
     }
     if (!running) return;
+    if (errStreak >= MAX_ERRORS) {
+      stop(`stopped after ${errStreak} errors: ${lastError}`);
+      return;
+    }
     scheduleNext(loopToken);
   }
 
@@ -859,6 +844,9 @@
         start();
         sendResponse({ ok: true, running });
         break;
+      case 'STOP_ALL':
+        stop('stopped (hotkey)');
+        break;
       case 'MEAT_STOP':
         stop();
         sendResponse({ ok: true, running });
@@ -876,10 +864,6 @@
         return true;
     }
   });
-
-  function broadcastStats() {
-    chrome.runtime.sendMessage({ type: 'MEAT_STATS', stats, running }).catch(() => {});
-  }
 
   // Register into the shared in-page HUD so both modules are controllable
   // without the toolbar popup (needed in fullscreen).
@@ -903,8 +887,13 @@
     redraw() { if (liveOverlay) drawOverlay(lastTargets); }
   });
 
+  // Autostart only in the frame that owns the game canvas: the manifest injects into
+  // every frame, and each one would otherwise run its own capture/click loop.
   chrome.storage.local.get(['meatAutoStart'], ({ meatAutoStart }) => {
-    if (meatAutoStart) start();
+    if (!meatAutoStart) return;
+    let tries = 0;
+    const arm = () => { if (document.querySelector('canvas')) start(); else if (++tries < 60) setTimeout(arm, 500); };
+    arm();
   });
 
 })();

@@ -24,6 +24,8 @@
   // older token is ignored. Without it, a cycle that was still in flight when the user
   // pressed Stop and then Start would reschedule itself next to the new chain.
   let loopToken = 0, tickBusy = false;
+  let errStreak = 0;       // consecutive failed cycles; MAX_ERRORS in a row stops the module
+  const MAX_ERRORS = 5;
   let liveOverlay = false; // calibration mode: keep the detection overlay updated each cycle
   let lastTrees = [];      // last detection, used to repaint after a viewport change
   let sessionEndsAt = 0;   // wall-clock deadline for the current run
@@ -193,6 +195,7 @@
       else if (queueSize() >= CFG.maxQueue) status = 'queue full, waiting';
       else {
         const trees = await scan();
+        errStreak = 0;
         stats.found = trees.length; stats.cycles++;
         if (liveOverlay && window.__SRToolkit?.hasOverlay('wood')) drawOverlay(trees);
         else liveOverlay = false;
@@ -203,7 +206,8 @@
           // session cap is the only automatic stop.
           status = 'no trees';
         } else {
-          await sleep(rand(80, 300));          if (await clickAt(t.x, t.y)) {
+          await sleep(rand(80, 300));
+          if (await clickAt(t.x, t.y)) {
             stats.clicked++; regClick(); last = t; recent.push({ x: t.x, y: t.y, t: Date.now() });
             status = 'cutting';
           }
@@ -212,19 +216,25 @@
     } catch (e) {
       // A failed capture used to vanish here, leaving the module "running" and idle.
       lastError = String((e && e.message) || e);
+      errStreak++;
     } finally {
       tickBusy = false;
+    }
+    if (running && errStreak >= MAX_ERRORS) {
+      stop(`stopped after ${errStreak} errors`);
+      return;
     }
     stats.queue = queueSize();
     // Reschedule with the CURRENT token: this cycle may have belonged to a run the user
     // already stopped and restarted, and the restarted chain is the one that continues.
-    if (running) timer = setTimeout(() => tick(loopToken), rand(CFG.intMin, CFG.intMax));
+    if (running) timer = setTimeout(() => tick(loopToken), rand(CFG.intMin, CFG.intMax) * (1 + errStreak));
   }
 
   function start() {
     if (running) return;
     running = true;
     lastError = '';
+    errStreak = 0;
     status = 'starting';
     const my = ++loopToken;
     const cap = CFG.sessionMinMs + Math.random() * (CFG.sessionMaxMs - CFG.sessionMinMs);
@@ -294,8 +304,11 @@
         applyConfig(m.config || {});
         send({ ok: true, cfg: CFG });
         break;
+      case 'STOP_ALL':
+        stop('stopped (hotkey)');
+        break;
       case 'WOOD_CALIBRATE':
-        calibrate().then(n => send({ n })).catch(() => send({ n: 0 }));
+        calibrate().then(n => send({ n })).catch(e => send({ n: 0, error: String((e && e.message) || e) }));
         return true;
     }
   });
@@ -308,12 +321,18 @@
       return { running, text: `${stats.clicked} marks${leftMin}` };
     },
     toggle() { running ? stop() : start(); },
-    calibrate() { calibrate().catch(() => {}); },
+    // Must return the promise: the HUD shows the count, or the reason it failed.
+    calibrate() { return calibrate(); },
     redraw() { if (liveOverlay) drawOverlay(lastTrees); }
   });
 
+  // Autostart only in the frame that owns the game canvas: the manifest injects into
+  // every frame, and each one would otherwise run its own capture/click loop.
   chrome.storage.local.get(['woodAutoStart'], ({ woodAutoStart }) => {
-    if (woodAutoStart) start();
+    if (!woodAutoStart) return;
+    let tries = 0;
+    const arm = () => { if (hasCanvas()) start(); else if (++tries < 60) setTimeout(arm, 500); };
+    arm();
   });
 
 })();

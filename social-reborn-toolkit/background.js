@@ -9,8 +9,12 @@ function ensureAttached(tabId, cb) {
     return;
   }
   chrome.debugger.attach({ tabId }, '1.3', () => {
-    if (chrome.runtime.lastError) {
-      cb(chrome.runtime.lastError.message);
+    const err = chrome.runtime.lastError;
+    // The MV3 service worker is killed after ~30 s idle and loses debuggeeTabId while
+    // the debugger stays attached. The next attach then fails with "already attached"
+    // and every click fails for good, so that case counts as success.
+    if (err && !/already attached/i.test(err.message)) {
+      cb(err.message);
       return;
     }
     debuggeeTabId = tabId;
@@ -162,6 +166,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (debuggeeTabId) {
       const id = debuggeeTabId;
       chrome.debugger.detach({ tabId: id }, () => {
+        void chrome.runtime.lastError; // already detached is fine
         debuggeeTabId = null;
         sendResponse({ ok: true });
       });
@@ -183,7 +188,7 @@ chrome.debugger.onDetach.addListener((source) => {
 // Limpiar debugger al cerrar tab
 chrome.tabs.onRemoved.addListener((tabId) => {
   if (tabId === debuggeeTabId) {
-    chrome.debugger.detach({ tabId }, () => {});
+    chrome.debugger.detach({ tabId }, () => { void chrome.runtime.lastError; });
     debuggeeTabId = null;
   }
 });
@@ -194,9 +199,11 @@ chrome.runtime.onInstalled.addListener(() => {
 // Keyboard shortcut: toggles the in-page HUD. This is the only way to reach the
 // controls while the page is in fullscreen, where the toolbar (and the popup) is hidden.
 chrome.commands.onCommand.addListener((command) => {
-  if (command !== 'toggle-hud') return;
+  // 'stop-all' is the panic button: it stops every module in the active tab.
+  const type = command === 'toggle-hud' ? 'HUD_TOGGLE' : command === 'stop-all' ? 'STOP_ALL' : null;
+  if (!type) return;
   chrome.tabs.query({ active: true, currentWindow: true }, ([tab]) => {
     if (!tab || !tab.id) return;
-    chrome.tabs.sendMessage(tab.id, { type: 'HUD_TOGGLE' }).catch(() => {});
+    chrome.tabs.sendMessage(tab.id, { type }).catch(() => {});
   });
 });

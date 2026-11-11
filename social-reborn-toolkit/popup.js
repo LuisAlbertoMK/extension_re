@@ -38,8 +38,14 @@ function paint(prefix, res, runningLabel, idleLabel, statsText) {
 
 let meatCalibration = null;
 let meatNote = null; // transient calibration result or failure reason
-let woodCalibration = null;
-let resCalibration = null;
+// Transient calibration results / failure reasons, per module.
+const notes = {};
+const noted = (k) => (notes[k] && Date.now() < notes[k].until ? notes[k].text : null);
+function calNote(k, r, unit) {
+  if (!r) notes[k] = { text: 'no answer from the tab (reload the game page)', until: Date.now() + 8000 };
+  else if (r.error) notes[k] = { text: String(r.error).replace(/^Error:\s*/, ''), until: Date.now() + 12000 };
+  else notes[k] = { text: `calibrated: ${r.n} ${unit}`, until: Date.now() + 6500 };
+}
 let resOptionFilled = false;
 let meatModeFilled = false;
 
@@ -64,13 +70,15 @@ async function refresh() {
   });
 
   const woodOk = paint('wood', wood, 'Stop', 'Start', (r) => {
-    if (woodCalibration !== null) return `calibrated: ${woodCalibration} tree(s)`;
+    const n = noted('wood');
+    if (n) return n;
     if (r.error) return String(r.error);
     return `${r.stats.clicked} marks · ${r.stats.found} seen`;
   });
 
   const resOk = paint('res', res, 'Stop', 'Start', (r) => {
-    if (resCalibration !== null) return `calibrated: ${resCalibration} bubble(s)`;
+    const n = noted('res');
+    if (n) return n;
     if (r.error) return String(r.error);
     const s = r.stats;
     return `${s.meat}🥩 ${s.wood}🪵 ${s.gold}🪙 ${s.stone}🪨 · ${s.chosen} timed`;
@@ -124,19 +132,13 @@ $('meatCal').addEventListener('click', async () => {
 });
 
 $('woodCal').addEventListener('click', async () => {
-  const r = await send({ type: 'WOOD_CALIBRATE' });
-  if (!r) return;
-  woodCalibration = r.n;
+  calNote('wood', await send({ type: 'WOOD_CALIBRATE' }), 'tree(s)');
   refresh();
-  setTimeout(() => { woodCalibration = null; }, 6500);
 });
 
 $('resCal').addEventListener('click', async () => {
-  const r = await send({ type: 'RES_CALIBRATE' });
-  if (!r) return;
-  resCalibration = r.n;
+  calNote('res', await send({ type: 'RES_CALIBRATE' }), 'bubble(s)');
   refresh();
-  setTimeout(() => { resCalibration = null; }, 6500);
 });
 
 // Gather-time choice for the resource bubbles. Without this the module kept its
@@ -192,6 +194,11 @@ inputBtn.addEventListener('click', async () => {
   const next = cur === 'synthetic' ? 'debugger' : 'synthetic';
   await chrome.storage.local.set({ inputMode: next });
   paintInputMode(next);
+});
+
+$('stopAll').addEventListener('click', async () => {
+  await send({ type: 'STOP_ALL' });
+  refresh();
 });
 
 $('hudToggle').addEventListener('click', async () => {
