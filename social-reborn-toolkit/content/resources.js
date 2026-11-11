@@ -269,14 +269,18 @@
     }
   }
 
+  // Picks the gather time on the dialog that is already on screen. The dialog opens in
+  // under a second after the building is clicked, so there is nothing to wait for.
+  // Returns whether the dialog was found and clicked.
   async function chooseTime() {
-    await wait(rand(CFG.selMin, CFG.selMax), 'choosing time in');
-    if (!running) return;
+    if (!running) return false;
     const r = await scan();
-    if (!r.dialog) return;                         // already closed
-    if (!r.dialog.target) { dialogTries = 99; return; }
-    if (await humanClick(r.dialog.target)) stats.chosen++;
-    await sleep(rand(800, 1500));
+    if (!r.dialog) return false;                   // already closed
+    if (!r.dialog.target) { dialogTries = 99; return false; }
+    const ok = await humanClick(r.dialog.target);
+    if (ok) stats.chosen++;
+    await sleep(rand(400, 800));
+    return ok;
   }
 
   function nextItem(items) {
@@ -292,40 +296,42 @@
 
   async function cycle() {
     let clicked = 0; dialogTries = 0; stats.cycles++;
-    // One click collects every bubble of that resource type, so a type is clicked at
-    // most once per run: clicking a second wood bubble would land on an already
-    // collected, empty spot. Placing them is per bubble though, so N bubbles of a type
-    // mean N gather-time dialogs to answer.
+    // One click queues every bubble of that type, but the dialog only opens for the
+    // building you click, so each queued building needs its own click and its own
+    // "Elige el tiempo" answer. `queue` holds the positions still owed an answer.
     const doneTypes = new Set();
-    let assignmentsLeft = 0;
-    let assignmentsTotal = 0;
+    let queue = [];
     for (let iter = 0; iter < 40 && running; iter++) {
-      status = 'scanning';
+      status = queue.length ? 'assigning times' : 'scanning';
       const r = await scan();
       if (iter === 0) stats.found = r.items.length;
       if (liveOverlay) drawOverlay(r);
       if (r.dialog) {
-        if (++dialogTries > Math.max(3, assignmentsTotal)) {
-          // Give up on this run instead of stopping the session: the dialog closes on
-          // its own and the next cycle retries, so the collector is never left off.
+        if (++dialogTries > 12) {
+          // Give up on this run instead of stopping the session, so the collector is
+          // never left off.
           lastError = 'cannot pick the gather time (check Calibrate)';
           return clicked;
         }
-        await chooseTime(); assignmentsLeft = Math.max(0, assignmentsLeft - 1); continue;
+        await chooseTime();
+        continue;
+      }
+      if (queue.length) {
+        await humanClick(queue.shift());          // opens that building's dialog
+        await sleep(rand(400, 800));
+        continue;
       }
       const it = nextItem(r.items.filter(x => !doneTypes.has(x.type)));
       if (!it) break;
-      // The single click queues every bubble of that type, so count them now: each one
-      // needs its own gather-time assignment.
-      assignmentsTotal = r.items.filter(x => x.type === it.type).length;
-      assignmentsLeft = assignmentsTotal;
       await sleep(rand(CFG.gapMin, CFG.gapMax));
       if (await humanClick(it)) {
         stats[it.type]++; clicked++;
         doneTypes.add(it.type);
+        // That single click queued every other bubble of this type.
+        queue = r.items.filter(x => x.type === it.type && x !== it).map(x => ({ x: x.x, y: x.y }));
         const key = Math.round(it.x / 14) + ',' + Math.round(it.y / 14), a = attempts.get(key);
         attempts.set(key, { n: (a ? a.n : 0) + 1, t: Date.now() });
-        await sleep(rand(1200, 2200));            // let the dialog open
+        await sleep(rand(400, 800));              // the dialog is up in under a second
       }
     }
     return clicked;

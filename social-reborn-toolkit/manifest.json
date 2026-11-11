@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Social Reborn Toolkit",
-  "version": "2.6.6",
+  "version": "2.6.7",
   "description": "Meat, wood and resource-bubble collection for Social Reborn (WebGL canvas)",
   "permissions": ["storage", "activeTab", "tabs", "debugger"],
   "host_permissions": ["https://empires.socialreborn.com/*"],
