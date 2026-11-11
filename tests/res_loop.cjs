@@ -1,4 +1,4 @@
-﻿// Resource collector end-to-end: start, scan, click a bubble, pick the gather time,
+// Resource collector end-to-end: start, scan, click a bubble, pick the gather time,
 // stop mid-flight and resume. The detector itself is pinned by the golden file; this
 // covers the loop and the controls around it.
 const shim = require('./shim.cjs');
@@ -13,6 +13,7 @@ let dialogPending = false;
 let bubbleClicks = 0;
 let dialogClicks = 0;
 let failing = false;
+let dyn = null;   // optional live frame provider, used to grow/shrink the world
 
 function frame(n, y0) {
   const { d } = base(W, H, 11);
@@ -35,13 +36,20 @@ function multiFrame() {
   return { w: W, h: H, data: d };
 }
 
-function fourGoldFrame() {
+// Five fixed bubbles, so a frame can describe "how many exist right now".
+const GOLD_SPOTS = [[260, 220], [520, 220], [780, 220], [1040, 300], [1040, 180]];
+
+function goldFrame(n) {
   const { d } = base(W, H, 12);
-  [[260, 220], [520, 220], [780, 220], [1040, 300]].forEach(([x, y]) => {
+  GOLD_SPOTS.slice(0, n).forEach(([x, y]) => {
     rect(d, W, x, y, 40, 40, 250, 250, 250);
     rect(d, W, x + 14, y + 14, 12, 12, 220, 190, 40);
   });
   return { w: W, h: H, data: d };
+}
+
+function fourGoldFrame() {
+  return goldFrame(4);
 }
 
 function dialog() {
@@ -69,6 +77,10 @@ const T = shim.load('resources.js',
         if (failing) return Promise.resolve({ error: 'boom' });
         if (dialogPending) {
           shim.CUR = dialog();
+          return Promise.resolve({ dataUrl: 'shot' });
+        }
+        if (dyn) {
+          shim.CUR = dyn();
           return Promise.resolve({ dataUrl: 'shot' });
         }
         if (shots.length === 0 || shotAt >= shots.length) {
@@ -147,8 +159,8 @@ function assert(cond, msg) {
   T.start();
   await wait(6000);
   T.stop();
-  assert(bubbleClicks - bubbleClicks0 >= 1, `phase 1 clicks bubbles (${bubbleClicks - bubbleClicks0})`);
-  assert(dialogClicks - dialogClicks0 >= 1, `phase 2 assigns queued bubbles (${dialogClicks - dialogClicks0})`);
+  assert(bubbleClicks - bubbleClicks0 >= 1, `a bubble is clicked for each assignment (${bubbleClicks - bubbleClicks0})`);
+  assert(dialogClicks - dialogClicks0 >= 1, `each bubble click gets a gather time (${dialogClicks - dialogClicks0})`);
 
   // --- a failed capture is reported, not swallowed ---------------------------
   T.stop();
@@ -169,13 +181,32 @@ function assert(cond, msg) {
   // --- four bubbles mean four assignments -----------------------------------
   await wait(500);
   dialogPending = false;
-  shots = [fourGoldFrame(), emptyFrame()];
+  // One fresh items frame per bubble: the loop re-scans after every assignment, so a
+  // static frame must be served again for each of the four bubbles.
+  shots = Array.from({ length: 10 }, fourGoldFrame).concat([emptyFrame()]);
   shotAt = 0;
   const dialogClicks0g = dialogClicks;
   const chosen0 = T.stats.chosen;
   T.start();
   await wait(10000);
   T.stop();
-  assert(dialogClicks - dialogClicks0g === 4, `four bubbles mean four assignments (${dialogClicks - dialogClicks0g})`);
+  assert(dialogClicks - dialogClicks0g === 4, `four bubbles mean four assignments (${dialogClicks - dialogClicks0g}) chosen=${T.stats.chosen - chosen0} err=${T.dbg().lastError}`);
   assert(T.stats.chosen - chosen0 === 4, `four bubbles mean four assignments (${T.stats.chosen - chosen0})`);
+
+  // --- a bubble that renders late is still assigned -------------------------
+  // The old two-phase design built its queue from ONE snapshot, so a bubble that was
+  // not on screen yet (or a whole type that rendered late) never got its time.
+  await wait(500);
+  dialogPending = false;
+  shots = [];
+  shotAt = 0;
+  const dlg0 = dialogClicks;
+  // Only one cycle: bumping the cycle pause keeps the assertions deterministic.
+  T.CFG.cycMin = 60000; T.CFG.cycMax = 60000;
+  dyn = () => goldFrame(dialogClicks - dlg0 >= 3 ? 5 : 3);
+  T.start();
+  await wait(6000);
+  T.stop();
+  dyn = null;
+  assert(dialogClicks - dlg0 === 5, `a bubble that renders late is still assigned (${dialogClicks - dlg0})`);
 })();

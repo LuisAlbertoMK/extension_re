@@ -8,13 +8,12 @@
 
   const CFG = {
     meat: true, wood: true, gold: true, stone: true,
-    cycMin: 5000, cycMax: 5500,        // ms entre ciclos (5-5.5s tras la ultima asignacion)
+    cycMin: 5000, cycMax: 7000,        // ms entre ciclos (5-7s tras la ultima asignacion)
     whiteMin: 243,                       // umbral de "blanco" de la burbuja
     wMin: 30, wMax: 65, hMin: 30, hMax: 70, // tamaño burbuja (px de screenshot)
     minPx: 40,                           // píxeles mínimos del color del recurso
     mTop: 0.09, mBottom: 0.14, mLeft: 0.07, mRight: 0.08, // zonas UI excluidas (fracción)
-    jitter: 3, gapMin: 700, gapMax: 1800, // jitter y pausa entre clicks (ms)
-    maxAttempts: 3,
+    jitter: 5, gapMin: 350, gapMax: 900, // jitter y pausa entre clicks (ms)
     option: 0,                           // 0=5min(arriba-izq) 1=1h 2=4h 3=8h
     // Wait before picking the gather time. Kept short: the dialog is on screen the whole
     // time and a long wait risks it closing on its own.
@@ -30,13 +29,13 @@
   // older token is ignored. Without it, a scan that was still in flight when the user
   // pressed Stop and then Start would reschedule itself next to the new chain.
   let loopToken = 0, tickBusy = false;
+  let errStreak = 0;      // consecutive cycles that threw (capture/decode failures)
+  let assignFails = 0;    // consecutive cycles that queued buildings but assigned none
   let lastError = '';                    // last capture/scan failure, shown in the popup
   let sessionEndsAt = 0;
   let liveOverlay = false;               // calibration mode: keep the overlay updated
   let lastResult = { items: [], dialog: null, rejects: [] };
-  let dialogTries = 0;
   const stats = { meat: 0, wood: 0, gold: 0, stone: 0, cycles: 0, found: 0, chosen: 0 };
-  const attempts = new Map();
 
   const rand = (a, b) => a + Math.random() * (b - a);
   const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -247,7 +246,7 @@
     return detect(await loadImg(r.dataUrl));
   }
 
-  async function humanClick(it) {
+  async function humanClick(it, alive) {
     const input = window.__SRToolkit?.input;
     if (!input) return false;
     const j = CFG.jitter;
@@ -258,33 +257,40 @@
     const dist = Math.hypot(x - from.x, y - from.y);
     const moveMs = Math.min(700, Math.max(90, Math.round(dist * (0.5 + Math.random() * 0.4))));
     await input.moveTo(x, y, moveMs);
+    // Stop may land while the cursor is still travelling: never click for a dead chain.
+    if (alive && !alive()) return false;
     return input.click(x, y);
   }
 
-  async function wait(ms, label) {
+  // Polls until the gather-time dialog shows up (it can lag after the building click).
+  // The poll interval is the real speed knob: the dialog is usually up in ~300-600 ms,
+  // so waiting a fixed second would only add dead time.
+  async function waitForDialog(ms, alive) {
     const end = Date.now() + ms;
-    while (running && Date.now() < end) {
-      if (label) status = `${label} (${Math.ceil((end - Date.now()) / 1000)}s)`;
-      await sleep(Math.min(500, Math.max(0, end - Date.now())));
+    while (alive()) {
+      const r = await scan();
+      if (r.dialog) return r;
+      if (Date.now() >= end) return null;
+      await sleep(150);
     }
+    return null;
   }
 
-  // Picks the gather time on the dialog that is already on screen. The dialog opens in
-  // under a second after the building is clicked, but it can lag on the last assignment,
-  // so we poll until it closes and fall back to the other buttons if the configured one
-  // (5 min = top-left) does not register on a shifted layout.
-  async function chooseTime() {
-    if (!running) return false;
-    const r = await scan();
-    if (!r.dialog) return false;                   // already closed
-    if (!r.dialog.target) { dialogTries = 99; return false; }
-    const targets = [r.dialog.target, ...r.dialog.btns.filter(b => b !== r.dialog.target)];
-    for (const t of targets) {
-      if (window.__resClickKind !== undefined) window.__resClickKind = 'dialog';
-      await humanClick(t);
-      const end = Date.now() + 600;
-      while (running && Date.now() < end) {
-        await sleep(150);
+  // Picks the gather time on the dialog. Only the configured button is ever clicked
+  // (re-located on every try): falling back to the OTHER buttons could commit a
+  // 1 h / 4 h / 8 h assignment if the dialog is merely slow to close.
+  async function chooseTime(alive) {
+    for (let attempt = 0; attempt < 3 && alive(); attempt++) {
+      const r = attempt === 0 ? await waitForDialog(1500, alive) : await scan();
+      if (!r || !r.dialog) {
+        if (attempt > 0) { stats.chosen++; return true; }   // it closed after our click
+        return false;                                       // never opened
+      }
+      if (!r.dialog.target) return false;
+      await humanClick(r.dialog.target, alive);
+      const end = Date.now() + 1200;
+      while (alive() && Date.now() < end) {
+        await sleep(120);
         const r2 = await scan();
         if (!r2.dialog) { stats.chosen++; return true; }
       }
@@ -292,64 +298,68 @@
     return false;
   }
 
-  function nextItem(items) {
-    const cand = items.filter(it => {
-      const key = Math.round(it.x / 14) + ',' + Math.round(it.y / 14), now = Date.now();
-      let a = attempts.get(key);
-      if (a && now - a.t > 300000) { attempts.delete(key); a = null; }
-      if (a && a.n < CFG.maxAttempts && now - a.t > 60000) a.n = 0;
-      return CFG[it.type] && !(a && (now - a.t < 8000 || a.n >= CFG.maxAttempts));
-    });
-    return cand.length ? cand[Math.floor(Math.random() * cand.length)] : null;
-  }
-
-  async function cycle() {
+  async function cycle(my) {
+    // `running` can be true again by the time an old cycle wakes up (Stop + Start), so
+    // every wait must also prove this cycle still owns the chain. Without it, a cycle
+    // left over from the previous run keeps clicking next to the new one.
+    const alive = () => running && my === loopToken;
     stats.cycles++;
-    dialogTries = 0;
-    const doneTypes = new Set();
-    let queue = [];            // queued positions, one per bubble of a clicked type
-    if (window.__resPhase !== undefined) window.__resPhase = 1;
-    for (let iter = 0; iter < 40 && running; iter++) {
-      status = queue.length ? 'assigning times' : 'scanning';
+    const chosenBefore = stats.chosen;
+    let clicked = 0, empty = 0, dialogFails = 0, pending = null;
+    const done = new Set();         // "x,y" -> this bubble already got its gather time
+    const tries = new Map();        // "x,y" -> clicks that never opened a dialog
+    const keyOf = it => Math.round(it.x / 20) + ',' + Math.round(it.y / 20);
+
+    // One pass, one bubble at a time: a click opens the gather-time dialog for THAT
+    // building, so the dialog is resolved immediately and the next bubble is clicked
+    // right after. No queue is built ahead of time, which is what used to skip bubbles
+    // that had not rendered yet when the snapshot was taken.
+    for (let iter = 0; iter < 400 && alive(); iter++) {
+      status = 'scanning';
       const r = await scan();
       if (iter === 0) stats.found = r.items.length;
-      if (liveOverlay) drawOverlay(r);
-      if (r.dialog) { await chooseTime(); continue; }
-      const it = nextItem(r.items.filter(x => !doneTypes.has(x.type)));
-      if (!it) break;
+      if (liveOverlay) {
+        if (window.__SRToolkit?.hasOverlay('res')) drawOverlay(r);
+        else liveOverlay = false;   // overlay was cleared from the HUD
+      }
+      if (r.dialog) {               // the dialog this click just opened
+        status = 'assigning times';
+        if (await chooseTime(alive)) {
+          if (pending) { done.add(pending); pending = null; }
+          dialogFails = 0;
+        } else if (++dialogFails >= 3) {
+          lastError = 'cannot pick the gather time (check Calibrate)';
+          break;
+        }
+        continue;
+      }
+      // No dialog: the previous click did not register on that bubble.
+      if (pending) { tries.set(pending, (tries.get(pending) || 0) + 1); pending = null; }
+      const pool = r.items.filter(x => {
+        const k = keyOf(x);
+        return !done.has(k) && (tries.get(k) || 0) < 2;
+      });
+      if (!pool.length) {           // nothing left (or the bubbles are still rendering)
+        if (++empty >= 3) break;
+        await sleep(400);
+        continue;
+      }
+      empty = 0;
+      const it = pool[Math.floor(Math.random() * pool.length)];
       await sleep(rand(CFG.gapMin, CFG.gapMax));
-      if (window.__resClickKind !== undefined) window.__resClickKind = 'bubble';
-      if (await humanClick(it)) {
-        stats[it.type]++;
-        doneTypes.add(it.type);
-        // Every bubble of this type is now queued (zz) and needs its own assignment.
-        queue.push(...r.items.filter(x => x.type === it.type).map(x => ({ x: x.x, y: x.y })));
-        const key = Math.round(it.x / 14) + ',' + Math.round(it.y / 14), a = attempts.get(key);
-        attempts.set(key, { n: (a ? a.n : 0) + 1, t: Date.now() });
-        await sleep(rand(1000, 1200));              // the dialog is up in under a second
-      }
+      if (await humanClick(it, alive)) { stats[it.type]++; clicked++; pending = keyOf(it); }
     }
-    if (!running) return;
+    if (!alive()) return stats.chosen - chosenBefore;
 
-    // Phase 2: click each queued building, wait 1s, select 5 min. Repeat for 100% of
-    // them - one assignment per bubble. The dialog only opens on this second click.
-    if (window.__resPhase !== undefined) window.__resPhase = 2;
-    for (const p of queue) {
-      if (!running) return;
-      await sleep(1000);
-      if (window.__resClickKind !== undefined) window.__resClickKind = 'bubble';
-      await humanClick(p);
-      await sleep(1000);
-      if (window.__resClickKind !== undefined) window.__resClickKind = 'dialog';
-      if (!(await chooseTime())) {
-        lastError = 'cannot pick the gather time (check Calibrate)';
-        break;
-      }
-    }
-    if (!running) return;
-
-    // Phase 3: wait for collection, then the cycle restarts.
-    await sleep(rand(5000, 5500));
+    // One assignment per bubble happened above; this tail only waits for the collection
+    // cycle and lets the next scan start.
+    const assigned = stats.chosen - chosenBefore;
+    status = assigned ? `assigned ${assigned}` : 'waiting for resources';
+    if (clicked && !assigned) assignFails++;
+    else if (assigned) assignFails = 0;
+    if (!alive()) return assigned;
+    await sleep(rand(CFG.cycMin, CFG.cycMax));
+    return assigned;   // tick() reports this in the status line
   }
 
   async function tick(my) {
@@ -365,24 +375,39 @@
     try {
       if (document.hidden) status = 'paused (hidden tab)';
       else {
-        const n = await cycle();
+        const n = await cycle(my);
+        errStreak = 0;
         if (running) status = n ? `collected ${n}` : 'waiting for resources';
       }
     } catch (e) {
       // A failed capture used to vanish here, leaving the module "running" and idle.
       lastError = String((e && e.message) || e);
+      errStreak++;
     } finally {
       tickBusy = false;
     }
-    // Reschedule with the CURRENT token: this scan may have belonged to a run the user
-    // already stopped and restarted, and the restarted chain is the one that continues.
-    if (running) timer = setTimeout(() => tick(loopToken), rand(CFG.cycMin, CFG.cycMax));
+    if (!running) return;
+    // A newer chain took over while this one held the busy flag (Stop + Start during a
+    // scan): its first tick returned early, so this stale tail hands the chain back
+    // exactly once. Rescheduling unconditionally on `loopToken` instead would let every
+    // stale tail spawn its own duplicate chain.
+    if (my !== loopToken) {
+      if (!timer) timer = setTimeout(() => tick(loopToken), 0);
+      return;
+    }
+    // Never stops on its own: a capture hiccup must not end the session - the user owns
+    // Stop. Back off instead, so a failing capture is retried slower, not tighter, and
+    // the error stays visible in the HUD/popup.
+    const backoff = 1 + errStreak + assignFails;
+    timer = setTimeout(() => tick(loopToken), rand(CFG.cycMin, CFG.cycMax) * backoff);
   }
 
   function start() {
     if (running) return;
     running = true;
     lastError = '';
+    errStreak = 0;
+    assignFails = 0;
     status = 'starting';
     const my = ++loopToken;
     const cap = CFG.sessionMinMs + Math.random() * (CFG.sessionMaxMs - CFG.sessionMinMs);
@@ -481,7 +506,6 @@
     if (!hasCanvas()) return;
     switch (m.type) {
       case 'RES_STATUS':
-        send({ running, status, error: lastError, stats: { ...stats }, cfg: CFG, liveOverlay });
         break;
       case 'RES_TOGGLE':
         running ? stop() : start();
@@ -490,6 +514,9 @@
       case 'RES_START':
         start();
         send({ ok: true, running });
+        break;
+      case 'STOP_ALL':
+        stop('stopped (hotkey)');
         break;
       case 'RES_STOP':
         stop();
@@ -500,7 +527,7 @@
         send({ ok: true, cfg: CFG });
         break;
       case 'RES_CALIBRATE':
-        calibrate().then(n => send({ n })).catch(() => send({ n: 0 }));
+        calibrate().then(n => send({ n })).catch(e => send({ n: 0, error: String((e && e.message) || e) }));
         return true;
     }
   });
@@ -517,12 +544,18 @@
       return { running, text: status === 'idle' ? base : `${base} · ${status}` };
     },
     toggle() { running ? stop() : start(); },
-    calibrate() { calibrate().catch(() => {}); },
+    // Must return the promise: the HUD shows the count, or the reason it failed.
+    calibrate() { return calibrate(); },
     redraw() { if (liveOverlay) drawOverlay(lastResult); }
   });
 
+  // Autostart only in the frame that owns the game canvas: the manifest injects into
+  // every frame, and each one would otherwise run its own capture/click loop.
   chrome.storage.local.get(['resAutoStart'], ({ resAutoStart }) => {
-    if (resAutoStart) start();
+    if (!resAutoStart) return;
+    let tries = 0;
+    const arm = () => { if (hasCanvas()) start(); else if (++tries < 60) setTimeout(arm, 500); };
+    arm();
   });
 
 })();
