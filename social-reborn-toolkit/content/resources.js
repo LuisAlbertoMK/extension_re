@@ -8,7 +8,7 @@
 
   const CFG = {
     meat: true, wood: true, gold: true, stone: true,
-    cycMin: 25000, cycMax: 40000,        // ms entre escaneos
+    cycMin: 5000, cycMax: 5500,        // ms entre ciclos (5-5.5s tras la ultima asignacion)
     whiteMin: 243,                       // umbral de "blanco" de la burbuja
     wMin: 30, wMax: 65, hMin: 30, hMax: 70, // tamaño burbuja (px de screenshot)
     minPx: 40,                           // píxeles mínimos del color del recurso
@@ -326,7 +326,7 @@
       }
       if (queue.length) {
         await humanClick(queue.shift());          // opens that building's dialog
-        await sleep(rand(400, 800));
+        await sleep(rand(1000, 1200));
         continue;
       }
       const it = nextItem(r.items.filter(x => !doneTypes.has(x.type)));
@@ -339,7 +339,7 @@
         queue = r.items.filter(x => x.type === it.type && x !== it).map(x => ({ x: x.x, y: x.y }));
         const key = Math.round(it.x / 14) + ',' + Math.round(it.y / 14), a = attempts.get(key);
         attempts.set(key, { n: (a ? a.n : 0) + 1, t: Date.now() });
-        await sleep(rand(400, 800));              // the dialog is up in under a second
+        await sleep(rand(1000, 1200));              // the dialog is up in under a second
       }
     }
     return clicked;
