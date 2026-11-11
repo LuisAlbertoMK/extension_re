@@ -12,7 +12,7 @@ Chrome extension plus a Node test harness for resource collection in **Social Re
 | --- | --- |
 | `meat` | Detects the white-box / red-centre meat icons on the canvas and clicks them one by one. |
 | `wood` | Detects trunks with green canopy above them and marks the trees. |
-| `res` | Detects white resource bubbles, classifies meat/wood/gold/stone, and picks the gather time in the 2x2 dialog. |
+| `res` | Detects white resource bubbles, classifies meat/wood/gold/stone, clicks one bubble per resource (that queues every bubble of the type) and picks the gather time in the 2x2 dialog. |
 | HUD | In-page panel (Shadow DOM) with a calibration overlay. `Ctrl+Shift+Y` toggles it, which is the only control surface in fullscreen. |
 
 ## Install

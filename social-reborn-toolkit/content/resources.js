@@ -16,7 +16,9 @@
     jitter: 3, gapMin: 700, gapMax: 1800, // jitter y pausa entre clicks (ms)
     maxAttempts: 3,
     option: 0,                           // 0=5min(arriba-izq) 1=1h 2=4h 3=8h
-    selMin: 10000, selMax: 40000,        // espera antes de elegir el tiempo (ms)
+    // Wait before picking the gather time. Kept short: the dialog is on screen the whole
+    // time and a long wait risks it closing on its own.
+    selMin: 3000, selMax: 8000,
     btnWMin: 80, btnWMax: 140, btnHMin: 20, btnHMax: 40, // botón "Elegir" (px)
     // Hard session cap, same anti-bot model as the meat and wood modules.
     sessionMinMs: 20 * 60 * 1000,
@@ -290,6 +292,10 @@
 
   async function cycle() {
     let clicked = 0; dialogTries = 0; stats.cycles++;
+    // One click collects every bubble of that resource type, so a type is clicked at
+    // most once per run: clicking a second wood bubble would land on an already
+    // collected, empty spot.
+    const doneTypes = new Set();
     for (let iter = 0; iter < 40 && running; iter++) {
       status = 'scanning';
       const r = await scan();
@@ -304,11 +310,12 @@
         }
         await chooseTime(); continue;
       }
-      const it = nextItem(r.items);
+      const it = nextItem(r.items.filter(x => !doneTypes.has(x.type)));
       if (!it) break;
       await sleep(rand(CFG.gapMin, CFG.gapMax));
       if (await humanClick(it)) {
         stats[it.type]++; clicked++;
+        doneTypes.add(it.type);
         const key = Math.round(it.x / 14) + ',' + Math.round(it.y / 14), a = attempts.get(key);
         attempts.set(key, { n: (a ? a.n : 0) + 1, t: Date.now() });
         await sleep(rand(1200, 2200));            // let the dialog open

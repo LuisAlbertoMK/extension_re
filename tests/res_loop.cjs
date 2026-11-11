@@ -19,6 +19,18 @@ function bubble(x, y, size, rgb) {
   return { w: W, h: H, data: d };
 }
 
+// Two meat bubbles and one gold bubble in a single frame: one click per type is
+// enough because collecting one bubble queues every bubble of that resource.
+function multiFrame() {
+  const { d } = base(W, H, 9);
+  [[300, 300, 40, [220, 40, 40]], [600, 300, 40, [220, 40, 40]], [900, 400, 44, [220, 190, 40]]]
+    .forEach(([x, y, size, rgb]) => {
+      rect(d, W, x, y, size, size, 250, 250, 250);
+      rect(d, W, x + ((size - 12) >> 1), y + ((size - 12) >> 1), 12, 12, rgb[0], rgb[1], rgb[2]);
+    });
+  return { w: W, h: H, data: d };
+}
+
 // 2x2 grid of "choose time" buttons, the shape detect() recognises as the dialog.
 function dialog() {
   const { d } = base(W, H, 6);
@@ -112,4 +124,16 @@ function assert(cond, msg) {
   await wait(2200);
   assert(T.stats.chosen >= 1, `the loop picks the gather time (${T.stats.chosen} chosen)`);
   T.stop();
+
+  // --- one click collects every bubble of that resource ----------------------
+  shots = [multiFrame()];
+  shotAt = 0;
+  T.CFG.cycMin = 60000; T.CFG.cycMax = 60000; // one run only
+  const meat0 = T.stats.meat, gold0 = T.stats.gold, clicks0 = clicks;
+  T.start();
+  await wait(6000);
+  T.stop();
+  assert(T.stats.meat - meat0 === 1, `one meat click covers both meat bubbles (${T.stats.meat - meat0})`);
+  assert(T.stats.gold - gold0 === 1, `the gold bubble is collected too (${T.stats.gold - gold0})`);
+  assert(clicks - clicks0 === 2, `one click per resource type, not per bubble (${clicks - clicks0})`);
 })();
