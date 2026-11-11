@@ -9,6 +9,7 @@ let clicks = 0;
 let scans = 0;
 let shots = [];
 let shotAt = 0;
+let failing = false;
 
 function bubble(x, y, size, rgb) {
   const { d } = base(W, H, 5);
@@ -29,7 +30,7 @@ function dialog() {
 }
 
 const T = shim.load('resources.js',
-  '{ start, stop, CFG, stats, detect }',
+  '{ start, stop, CFG, stats, detect, dbg: () => ({ running, status, lastError }) }',
   (sb) => {
     sb.__SRToolkit = {
       show() {},
@@ -37,6 +38,7 @@ const T = shim.load('resources.js',
       hasOverlay: () => false,
       captureClean() {
         scans++;
+        if (failing) return Promise.resolve({ error: 'boom' });
         const i = Math.min(shotAt++, shots.length - 1);
         shim.CUR = shots[i];
         return Promise.resolve({ dataUrl: 'shot' });
@@ -71,6 +73,16 @@ function assert(cond, msg) {
 
   const dlg = T.detect({ width: W, height: H, _data: dialog().data });
   assert(!!dlg.dialog && !!dlg.dialog.target, 'detect recognises the gather-time dialog');
+
+  // --- a failed capture is reported, not swallowed ---------------------------
+  failing = true;
+  T.start();
+  await wait(400);
+  let d = T.dbg();
+  assert(/capture failed: boom/.test(d.lastError), `a capture error is reported (${d.lastError})`);
+  assert(d.running === true, 'a capture error does not stop the session');
+  T.stop();
+  failing = false;
 
   // --- start, collect, stop, resume -----------------------------------------
   shots = [bubble(200, 200, 40, [220, 40, 40])];

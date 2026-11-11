@@ -14,13 +14,12 @@
     clickOffsetY: -4,             // move the click up toward the canopy
     jitter: 2,
     mTop: 90, mBottom: 150, mLeft: 90, mRight: 100, // excluded UI zones (CSS px)
-    maxEmpty: 3,
     // Hard session cap: the cutter stops itself after a random 20-30 minutes.
     sessionMinMs: 20 * 60 * 1000,
     sessionMaxMs: 30 * 60 * 1000
   };
 
-  let running = false, timer = null, last = null, empty = 0;
+  let running = false, timer = null, last = null;
   // One chain at a time: every start/stop bumps the token and a callback carrying an
   // older token is ignored. Without it, a cycle that was still in flight when the user
   // pressed Stop and then Start would reschedule itself next to the new chain.
@@ -29,6 +28,7 @@
   let lastTrees = [];      // last detection, used to repaint after a viewport change
   let sessionEndsAt = 0;   // wall-clock deadline for the current run
   let status = 'idle';
+  let lastError = '';      // last capture/scan failure, shown in the popup
   const stats = { clicked: 0, cycles: 0, found: 0, queue: 0 };
   let finish = [], recent = [];
 
@@ -134,6 +134,8 @@
 
   async function scanOnce(format) {
     const r = await capture(format);
+    if (!r) throw new Error('capture returned nothing');
+    if (r.error) throw new Error(`capture failed: ${r.error}`);
     return detect(await loadImg(r.dataUrl));
   }
 
@@ -185,6 +187,7 @@
       return;
     }
     tickBusy = true;
+    lastError = '';
     try {
       if (document.hidden) status = 'paused (hidden tab)';
       else if (queueSize() >= CFG.maxQueue) status = 'queue full, waiting';
@@ -195,18 +198,21 @@
         else liveOverlay = false;
         const t = pick(trees);
         if (!t) {
+          // Never stop the session because the map looks empty: trees respawn, and a
+          // self-stop leaves the module off until the user notices. The 20-30 min
+          // session cap is the only automatic stop.
           status = 'no trees';
-          if (++empty >= CFG.maxEmpty) { stop('no trees detected'); return; }
         } else {
-          empty = 0;
-          await sleep(rand(80, 300));
-          if (await clickAt(t.x, t.y)) {
+          await sleep(rand(80, 300));          if (await clickAt(t.x, t.y)) {
             stats.clicked++; regClick(); last = t; recent.push({ x: t.x, y: t.y, t: Date.now() });
             status = 'cutting';
           }
         }
       }
-    } catch { /* ignore */ } finally {
+    } catch (e) {
+      // A failed capture used to vanish here, leaving the module "running" and idle.
+      lastError = String((e && e.message) || e);
+    } finally {
       tickBusy = false;
     }
     stats.queue = queueSize();
@@ -218,7 +224,7 @@
   function start() {
     if (running) return;
     running = true;
-    empty = 0;
+    lastError = '';
     status = 'starting';
     const my = ++loopToken;
     const cap = CFG.sessionMinMs + Math.random() * (CFG.sessionMaxMs - CFG.sessionMinMs);
@@ -278,7 +284,7 @@
     if (!hasCanvas()) return;
     switch (m.type) {
       case 'WOOD_STATUS':
-        send({ running, status, stats: { ...stats, queue: queueSize() }, cfg: CFG });
+        send({ running, status, error: lastError, stats: { ...stats, queue: queueSize() }, cfg: CFG });
         break;
       case 'WOOD_TOGGLE':
         running ? stop() : start();

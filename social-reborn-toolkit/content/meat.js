@@ -95,6 +95,7 @@
   // module would run at double cadence with no way to stop it.
   let loopToken = 0;
   let cycleBusy = false;
+  let lastError = '';      // last capture/scan failure, shown in the popup
   let liveOverlay = false; // calibration mode: keep the detection overlay updated each cycle
   let lastTargets = [];    // last detection, used to repaint after a viewport change
   let sessionEndsAt = 0;   // wall-clock deadline for the current run
@@ -575,7 +576,12 @@
 
     try {
       const response = await capture('jpeg');
-      if (!response || response.error) {
+      if (!response) {
+        lastError = 'capture returned nothing';
+        return;
+      }
+      if (response.error) {
+        lastError = `capture failed: ${response.error}`;
         return;
       }
 
@@ -657,6 +663,8 @@
       stats.cycles++;
       broadcastStats();
     } catch (e) {
+      // A failed decode or click used to vanish here, leaving the run looking empty.
+      lastError = String((e && e.message) || e);
     }
   }
 
@@ -667,6 +675,7 @@
     zeroStreak = 0;
     usedDragThisCycle = false;
     const my = ++loopToken;
+    lastError = '';
     // Random 20-30 minute cap, so the account is never farming for hours on end.
     const cap = CONFIG.sessionMinMs + Math.random() * (CONFIG.sessionMaxMs - CONFIG.sessionMinMs);
     sessionEndsAt = Date.now() + cap;
@@ -723,6 +732,7 @@
       return;
     }
     cycleBusy = true;
+    lastError = '';
     try {
       await collectCycle();
     } finally {
@@ -839,7 +849,7 @@
     if (!document.querySelector('canvas')) return;
     switch (msg.type) {
       case 'MEAT_STATUS':
-        sendResponse({ running, stats, nextCollectionTime, isTabVisible, cfg: CONFIG });
+        sendResponse({ running, stats, nextCollectionTime, isTabVisible, error: lastError, cfg: CONFIG });
         break;
       case 'MEAT_TOGGLE':
         running ? stop() : start();

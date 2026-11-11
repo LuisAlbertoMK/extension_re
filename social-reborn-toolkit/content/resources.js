@@ -28,6 +28,7 @@
   // older token is ignored. Without it, a scan that was still in flight when the user
   // pressed Stop and then Start would reschedule itself next to the new chain.
   let loopToken = 0, tickBusy = false;
+  let lastError = '';                    // last capture/scan failure, shown in the popup
   let sessionEndsAt = 0;
   let liveOverlay = false;               // calibration mode: keep the overlay updated
   let lastResult = { items: [], dialog: null, rejects: [] };
@@ -239,6 +240,8 @@
 
   async function scan() {
     const r = await capture();
+    if (!r) throw new Error('capture returned nothing');
+    if (r.error) throw new Error(`capture failed: ${r.error}`);
     return detect(await loadImg(r.dataUrl));
   }
 
@@ -293,7 +296,12 @@
       if (iter === 0) stats.found = r.items.length;
       if (liveOverlay) drawOverlay(r);
       if (r.dialog) {
-        if (++dialogTries > 3) { stop('cannot pick the gather time (check Calibrate)'); return clicked; }
+        if (++dialogTries > 3) {
+          // Give up on this run instead of stopping the session: the dialog closes on
+          // its own and the next cycle retries, so the collector is never left off.
+          lastError = 'cannot pick the gather time (check Calibrate)';
+          return clicked;
+        }
         await chooseTime(); continue;
       }
       const it = nextItem(r.items);
@@ -318,13 +326,17 @@
       return;
     }
     tickBusy = true;
+    lastError = '';
     try {
       if (document.hidden) status = 'paused (hidden tab)';
       else {
         const n = await cycle();
         if (running) status = n ? `collected ${n}` : 'waiting for resources';
       }
-    } catch { /* ignore */ } finally {
+    } catch (e) {
+      // A failed capture used to vanish here, leaving the module "running" and idle.
+      lastError = String((e && e.message) || e);
+    } finally {
       tickBusy = false;
     }
     // Reschedule with the CURRENT token: this scan may have belonged to a run the user
@@ -335,6 +347,7 @@
   function start() {
     if (running) return;
     running = true;
+    lastError = '';
     status = 'starting';
     const my = ++loopToken;
     const cap = CFG.sessionMinMs + Math.random() * (CFG.sessionMaxMs - CFG.sessionMinMs);
@@ -433,7 +446,7 @@
     if (!hasCanvas()) return;
     switch (m.type) {
       case 'RES_STATUS':
-        send({ running, status, stats: { ...stats }, cfg: CFG, liveOverlay });
+        send({ running, status, error: lastError, stats: { ...stats }, cfg: CFG, liveOverlay });
         break;
       case 'RES_TOGGLE':
         running ? stop() : start();

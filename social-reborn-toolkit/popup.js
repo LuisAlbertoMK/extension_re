@@ -53,6 +53,7 @@ async function refresh() {
   const meatOk = paint('meat', meat, 'Stop', 'Start', (r) => {
     if (meatNote && Date.now() < meatNote.until) return meatNote.text;
     if (meatCalibration !== null) return `calibrated: ${meatCalibration} icon(s)`;
+    if (r.error) return String(r.error);
     const base = `${r.stats.collected} clicks · ${r.stats.cycles} cycles`;
     if (r.running && r.nextCollectionTime) {
       const secs = Math.max(0, Math.ceil((r.nextCollectionTime - Date.now()) / 1000));
@@ -64,11 +65,13 @@ async function refresh() {
 
   const woodOk = paint('wood', wood, 'Stop', 'Start', (r) => {
     if (woodCalibration !== null) return `calibrated: ${woodCalibration} tree(s)`;
+    if (r.error) return String(r.error);
     return `${r.stats.clicked} marks · ${r.stats.found} seen`;
   });
 
   const resOk = paint('res', res, 'Stop', 'Start', (r) => {
     if (resCalibration !== null) return `calibrated: ${resCalibration} bubble(s)`;
+    if (r.error) return String(r.error);
     const s = r.stats;
     return `${s.meat}🥩 ${s.wood}🪵 ${s.gold}🪙 ${s.stone}🪨 · ${s.chosen} timed`;
   });
