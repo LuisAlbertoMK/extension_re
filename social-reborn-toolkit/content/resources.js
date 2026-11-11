@@ -270,17 +270,25 @@
   }
 
   // Picks the gather time on the dialog that is already on screen. The dialog opens in
-  // under a second after the building is clicked, so there is nothing to wait for.
-  // Returns whether the dialog was found and clicked.
+  // under a second after the building is clicked, but it can lag on the last assignment,
+  // so we poll until it closes and fall back to the other buttons if the configured one
+  // (5 min = top-left) does not register on a shifted layout.
   async function chooseTime() {
     if (!running) return false;
     const r = await scan();
     if (!r.dialog) return false;                   // already closed
     if (!r.dialog.target) { dialogTries = 99; return false; }
-    const ok = await humanClick(r.dialog.target);
-    if (ok) stats.chosen++;
-    await sleep(rand(400, 800));
-    return ok;
+    const targets = [r.dialog.target, ...r.dialog.btns.filter(b => b !== r.dialog.target)];
+    for (const t of targets) {
+      await humanClick(t);
+      const end = Date.now() + 600;
+      while (running && Date.now() < end) {
+        await sleep(150);
+        const r2 = await scan();
+        if (!r2.dialog) { stats.chosen++; return true; }
+      }
+    }
+    return false;
   }
 
   function nextItem(items) {

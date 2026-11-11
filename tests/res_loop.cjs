@@ -10,6 +10,9 @@ let scans = 0;
 let shots = [];
 let shotAt = 0;
 let failing = false;
+let dialogOpen = false;
+let bubbleClicks = 0;
+let dialogClicks = 0;
 
 function bubble(x, y, size, rgb) {
   const { d } = base(W, H, 5);
@@ -68,13 +71,22 @@ const T = shim.load('resources.js',
       captureClean() {
         scans++;
         if (failing) return Promise.resolve({ error: 'boom' });
+        if (dialogOpen) {
+          shim.CUR = dialog();
+          return Promise.resolve({ dataUrl: 'shot' });
+        }
         const i = Math.min(shotAt++, shots.length - 1);
         shim.CUR = shots[i];
         return Promise.resolve({ dataUrl: 'shot' });
       },
       input: {
         moveTo: async () => {},
-        click: async () => { clicks++; return true; },
+        click: async () => {
+          clicks++;
+          if (dialogOpen) dialogClicks++; else bubbleClicks++;
+          dialogOpen = !dialogOpen;
+          return true;
+        },
         get position() { return { x: 800, y: 450 }; },
       },
     };
@@ -134,32 +146,40 @@ function assert(cond, msg) {
   T.stop();
 
   // --- the gather-time dialog ------------------------------------------------
-  shots = [dialog()];
+  dialogOpen = true;
+  shots = [];
   shotAt = 0;
   T.CFG.option = 2;
   T.start();
   await wait(2200);
   assert(T.stats.chosen >= 1, `the loop picks the gather time (${T.stats.chosen} chosen)`);
   T.stop();
+  dialogOpen = false;
 
   // --- one click collects every bubble of that resource ----------------------
-  shots = [multiFrame(), dialog(), dialog(), dialog(), emptyFrame()];
+  dialogOpen = false;
+  shots = [multiFrame(), emptyFrame()];
   shotAt = 0;
   T.CFG.cycMin = 60000; T.CFG.cycMax = 60000; // one run only
-  const meat0 = T.stats.meat, gold0 = T.stats.gold, clicks0 = clicks;
+  const meat0 = T.stats.meat, gold0 = T.stats.gold, bubbleClicks0 = bubbleClicks, dialogClicks0 = dialogClicks;
   T.start();
   await wait(6000);
   T.stop();
   assert((T.stats.meat - meat0) + (T.stats.gold - gold0) >= 1, `at least one type collected (${T.stats.meat - meat0} meat + ${T.stats.gold - gold0} gold)`);
-  assert(clicks - clicks0 >= 1 && clicks - clicks0 <= 3, `clicks queued positions (${clicks - clicks0})`);
+  assert(bubbleClicks - bubbleClicks0 >= 1 && bubbleClicks - bubbleClicks0 <= 3, `clicks queued positions (${bubbleClicks - bubbleClicks0})`);
+  assert(dialogClicks - dialogClicks0 >= 1, `each bubble click opens a dialog (${dialogClicks - dialogClicks0})`);
 
   // --- one assignment per queued bubble --------------------------------------
-  shots = [fourGoldFrame(), dialog(), dialog(), dialog(), dialog(), dialog(), dialog(), dialog(), dialog(), emptyFrame()];
+  dialogOpen = false;
+  shots = [fourGoldFrame(), emptyFrame()];
   shotAt = 0;
+  const bubbleClicks0g = bubbleClicks, dialogClicks0g = dialogClicks;
   const chosen0 = T.stats.chosen;
   T.start();
   await wait(10000);
   T.stop();
+  assert(dialogClicks - dialogClicks0g === 4,
+    `four bubbles mean four assignments (${dialogClicks - dialogClicks0g})`);
   assert(T.stats.chosen - chosen0 === 4,
     `four bubbles mean four assignments (${T.stats.chosen - chosen0})`);
 })();
