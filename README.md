@@ -36,6 +36,8 @@ node tests/control.cjs              # one chain at a time: stop/start/resume
 node tests/meat_stale_start_timer.cjs
 node tests/meat_policy.cjs          # 100% click-only pacing
 node tests/res_loop.cjs             # resource collector end to end
+node tests/wood_loop.cjs            # empty map and capture errors never stop the run
+node tests/wood_villager.cjs        # a villager that never cuts stops the module
 node tests/hud_ui.cjs               # HUD row buttons and calibration reporting
 ```
 

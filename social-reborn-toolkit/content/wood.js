@@ -7,6 +7,8 @@
   const CFG = {
     intMin: 2600, intMax: 3600,   // ms between marks
     cutTime: 7000,                // ms to cut one tree
+    cutGrace: 3000,               // extra ms before a clicked tree must be gone
+    noCutLimit: 3,                // clicks in a row whose tree survived = villager is dead/busy
     maxQueue: 5,                  // queue cap (do not mark when full)
     rMin: 150, rGap: 40, gbGap: 15, // trunk color: R>=rMin, R-G>=rGap, G-B>=gbGap
     minTrunk: 3, maxTrunk: 60,    // trunk size (screenshot px)
@@ -20,6 +22,8 @@
   };
 
   let running = false, timer = null, last = null;
+  let pendingCut = [];     // clicks still waiting to see their tree disappear: { x, y, at }
+  let noCutStreak = 0;     // consecutive clicks whose tree was still standing afterwards
   // One chain at a time: every start/stop bumps the token and a callback carrying an
   // older token is ignored. Without it, a cycle that was still in flight when the user
   // pressed Stop and then Start would reschedule itself next to the new chain.
@@ -198,16 +202,35 @@
         stats.found = trees.length; stats.cycles++;
         if (liveOverlay && window.__SRToolkit?.hasOverlay('wood')) drawOverlay(trees);
         else liveOverlay = false;
+
+        // Did the trees we clicked earlier actually fall? A dead or busy villager keeps
+        // the tree standing, and without this check the module would keep clicking for
+        // the whole session cap without collecting anything.
+        const now = Date.now();
+        const due = pendingCut.filter(p => now >= p.at);
+        if (due.length) pendingCut = pendingCut.filter(p => now < p.at);
+        for (const p of due) {
+          if (trees.some(x => Math.hypot(x.x - p.x, x.y - p.y) < 10)) {
+            noCutStreak++;
+          } else noCutStreak = 0;
+        }
+        if (noCutStreak >= CFG.noCutLimit) {
+          stop('villager is not cutting (dead or busy)');
+          return;
+        }
+        if (noCutStreak) status = `tree not cut (${noCutStreak}/${CFG.noCutLimit})`;
+
         const t = pick(trees);
         if (!t) {
           // Never stop the session because the map looks empty: trees respawn, and a
           // self-stop leaves the module off until the user notices. The 20-30 min
           // session cap is the only automatic stop.
-          status = 'no trees';
+          if (!noCutStreak) status = 'no trees';
         } else {
           await sleep(rand(80, 300));
           if (await clickAt(t.x, t.y)) {
             stats.clicked++; regClick(); last = t; recent.push({ x: t.x, y: t.y, t: Date.now() });
+            pendingCut.push({ x: t.x, y: t.y, at: Date.now() + CFG.cutTime + CFG.cutGrace });
             status = 'cutting';
           }
         }
@@ -230,6 +253,8 @@
     running = true;
     lastError = '';
     errStreak = 0;
+    pendingCut = [];
+    noCutStreak = 0;
     status = 'starting';
     const my = ++loopToken;
     const cap = CFG.sessionMinMs + Math.random() * (CFG.sessionMaxMs - CFG.sessionMinMs);
