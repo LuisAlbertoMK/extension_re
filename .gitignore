@@ -1,2 +1,6 @@
 # agent tooling cache, not part of the extension
 .atl/
+
+# downloaded game assets (tools/fetch-assets.cjs)
+game-assets/
+urls.json

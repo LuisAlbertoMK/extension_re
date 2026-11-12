@@ -44,6 +44,25 @@ node tests/hud_ui.cjs               # HUD row buttons and calibration reporting
 `node tests/run.cjs --update` rewrites `tests/golden.json` after an intentional
 threshold change; review the diff before committing it.
 
+## Downloading the game assets
+
+The client's own files (UI atlas, icons, data tables) are useful for the detectors and
+for the mixer data. The browser asks "keep this download?" for every file, so fetch them
+with a script instead.
+
+1. Open the game tab, run the "step 1" line at the top of `tools/collect-urls.js`, then
+   reload the page so the resource buffer records everything.
+2. Play the screens you care about (a building panel, the mixer), paste the rest of
+   `tools/collect-urls.js` and save the printed JSON as `urls.json`.
+3. Download everything:
+
+```
+node tools/fetch-assets.cjs --urls urls.json --out game-assets
+```
+
+Re-running is safe: it skips what is already there and keeps walking references from the
+JSON/atlas files it downloads. `--seed <url>` downloads a single index instead of a list.
+
 ## Layout
 
 ```
