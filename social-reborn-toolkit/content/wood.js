@@ -24,8 +24,7 @@
   // older token is ignored. Without it, a cycle that was still in flight when the user
   // pressed Stop and then Start would reschedule itself next to the new chain.
   let loopToken = 0, tickBusy = false;
-  let errStreak = 0;       // consecutive failed cycles; MAX_ERRORS in a row stops the module
-  const MAX_ERRORS = 5;
+  let errStreak = 0;       // consecutive failed cycles; only used to back off, never to stop
   let liveOverlay = false; // calibration mode: keep the detection overlay updated each cycle
   let lastTrees = [];      // last detection, used to repaint after a viewport change
   let sessionEndsAt = 0;   // wall-clock deadline for the current run
@@ -220,14 +219,10 @@
     } finally {
       tickBusy = false;
     }
-    if (running && errStreak >= MAX_ERRORS) {
-      stop(`stopped after ${errStreak} errors`);
-      return;
-    }
     stats.queue = queueSize();
-    // Reschedule with the CURRENT token: this cycle may have belonged to a run the user
-    // already stopped and restarted, and the restarted chain is the one that continues.
-    if (running) timer = setTimeout(() => tick(loopToken), rand(CFG.intMin, CFG.intMax) * (1 + errStreak));
+    // Never stops on its own: a capture hiccup must not end the session - the user owns
+    // Stop. Back off instead, so a failing capture is retried slower, not tighter.
+    if (running) timer = setTimeout(() => tick(loopToken), rand(CFG.intMin, CFG.intMax) * (1 + Math.min(errStreak, 10)));
   }
 
   function start() {

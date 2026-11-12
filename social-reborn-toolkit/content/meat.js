@@ -96,8 +96,7 @@
   let loopToken = 0;
   let cycleBusy = false;
   let lastError = '';      // last capture/scan failure, shown in the popup
-  let errStreak = 0;       // consecutive failed cycles; MAX_ERRORS in a row stops the module
-  const MAX_ERRORS = 5;
+  let errStreak = 0;       // consecutive failed cycles; only used to back off, never to stop
   let liveOverlay = false; // calibration mode: keep the detection overlay updated each cycle
   let lastTargets = [];    // last detection, used to repaint after a viewport change
   let sessionEndsAt = 0;   // wall-clock deadline for the current run
@@ -720,10 +719,6 @@
       cycleBusy = false;
     }
     if (!running) return;
-    if (errStreak >= MAX_ERRORS) {
-      stop(`stopped after ${errStreak} errors: ${lastError}`);
-      return;
-    }
     scheduleNext(loopToken);
   }
 
@@ -734,7 +729,10 @@
     let min = CONFIG.minDelay, max = CONFIG.maxDelay;
     if (usedDragThisCycle) { min = CONFIG.dragMinDelay; max = CONFIG.dragMaxDelay; }
     usedDragThisCycle = false;
-    const delay = min + Math.random() * (max - min);
+    // A failing capture backs off instead of stopping the run: the user owns Stop, and
+    // a transient capture hiccup must never end a session on its own.
+    // Capped so a capture that never recovers still retries every ~10x the normal gap.
+    const delay = (min + Math.random() * (max - min)) * (1 + Math.min(errStreak, 10));
     nextCollectionTime = Date.now() + delay;
     armTimer(my, delay);
   }

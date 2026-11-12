@@ -5,6 +5,7 @@ const { base } = require('./frames.cjs');
 
 const W = 800, H = 600;
 let failing = false;
+let scans = 0;
 
 const T = shim.load('wood.js',
   '{ start, stop, CFG, stats, dbg: () => ({ running, status, lastError }) }',
@@ -12,6 +13,7 @@ const T = shim.load('wood.js',
     sb.__SRToolkit = {
       show() {}, register() {}, hasOverlay: () => false, captureFormat: 'jpeg',
       captureClean() {
+        scans++;
         if (failing) return Promise.resolve({ error: 'boom' });
         const { d } = base(W, H, 3);
         shim.CUR = { w: W, h: H, data: d };
@@ -45,5 +47,12 @@ function assert(cond, msg) {
   d = T.dbg();
   assert(/capture failed: boom/.test(d.lastError), `a capture error is reported (${d.lastError})`);
   assert(d.running === true, 'a capture error does not stop the session');
+
+  // Long enough for more than the five consecutive errors that used to stop the run.
+  const scans0 = scans;
+  await wait(1500);
+  d = T.dbg();
+  assert(scans - scans0 >= 6, `it keeps retrying instead of giving up (${scans - scans0} attempts)`);
+  assert(d.running === true, `consecutive capture errors never stop the run (running: ${d.running})`);
   T.stop();
 })();

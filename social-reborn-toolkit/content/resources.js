@@ -398,7 +398,8 @@
     // Never stops on its own: a capture hiccup must not end the session - the user owns
     // Stop. Back off instead, so a failing capture is retried slower, not tighter, and
     // the error stays visible in the HUD/popup.
-    const backoff = 1 + errStreak + assignFails;
+    // Capped so a capture that never recovers still retries every ~10x the normal gap.
+    const backoff = 1 + Math.min(errStreak, 10) + Math.min(assignFails, 10);
     timer = setTimeout(() => tick(loopToken), rand(CFG.cycMin, CFG.cycMax) * backoff);
   }
 
