@@ -24,6 +24,7 @@ function makeEl() {
 
 let toggled = 0;
 let calibrated = 0;
+let stuck = false;   // when true, screenshot requests never answer
 
 const T = shim.load('hud.js', '{ api: window.__SRToolkit, rows }', (sb) => {
   const body = makeEl();
@@ -39,6 +40,8 @@ const T = shim.load('hud.js', '{ api: window.__SRToolkit, rows }', (sb) => {
   sb.addEventListener = () => {};
   sb.top = sb; // hud.js only builds its UI in the top frame
   sb.requestAnimationFrame = (fn) => setTimeout(fn, 0);
+  const send = sb.chrome.runtime.sendMessage;
+  sb.chrome.runtime.sendMessage = (msg) => (stuck ? new Promise(() => {}) : send(msg));
 });
 
 const wait = (ms) => new Promise(r => setTimeout(r, ms));
@@ -90,6 +93,15 @@ T.api.register({
   // A second click must toggle again, not stick on the first result.
   row.querySelector('[data-act="toggle"]').fire('click');
   assert(toggled === 2, `the button keeps toggling (${toggled} toggle calls)`);
+
+  // --- a capture that never answers must not hold the queue forever ---------
+  // The queue is a promise chain: one capture that never settles would block every
+  // module for the rest of the session with the UI still saying "running".
+  stuck = true;
+  let r = await T.api.captureClean({ timeoutMs: 120 });
+  assert(!!r && /timed out/.test(r.error), `a stuck capture is reported (${r && r.error})`);
+  r = await T.api.captureClean({ timeoutMs: 120 });
+  assert(!!r, 'the queue still accepts a capture after a timeout');
 
   // The HUD runs a 1 s repaint timer; stop it so the test process can exit.
   T.api.hide();

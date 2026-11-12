@@ -248,8 +248,17 @@
       () => doCaptureClean(options),
       () => doCaptureClean(options)
     );
-    captureLock = run.catch(() => {});
-    return run;
+    // A capture that never settles (a service worker that died mid-request, a closed
+    // tab) would hold this queue forever and every module would look "running" while
+    // doing nothing. Time it out so the next cycle can try again.
+    const ms = (options && options.timeoutMs) || 8000;
+    let handle = 0;
+    const timeout = new Promise(res => {
+      handle = setTimeout(() => res({ error: 'capture timed out' }), ms);
+    });
+    const guarded = Promise.race([run, timeout]).finally(() => clearTimeout(handle));
+    captureLock = guarded.catch(() => {});
+    return guarded;
   }
 
   async function doCaptureClean(options) {
