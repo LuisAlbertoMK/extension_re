@@ -240,6 +240,9 @@
   // Serialized: with both modules running, concurrent captures would let one module's
   // restored overlay leak into the other's screenshot.
   let captureLock = Promise.resolve();
+  // counters, not guesses: Chrome throttles captureVisibleTab to 2/s, so a high error
+  // rate here is the signal that the poll interval has to change.
+  const captureStats = { total: 0, errors: 0 };
 
   function captureClean(options) {
     // Both callbacks must ignore the previous promise's value/reason: doCaptureClean
@@ -257,8 +260,16 @@
       handle = setTimeout(() => res({ error: 'capture timed out' }), ms);
     });
     const guarded = Promise.race([run, timeout]).finally(() => clearTimeout(handle));
-    captureLock = guarded.catch(() => {});
-    return guarded;
+    const counted = guarded.then(
+      (res) => {
+        captureStats.total++;
+        if (!res || res.error) captureStats.errors++;
+        return res;
+      },
+      (e) => { captureStats.total++; captureStats.errors++; throw e; }
+    );
+    captureLock = counted.catch(() => {});
+    return counted;
   }
 
   async function doCaptureClean(options) {
@@ -623,6 +634,7 @@
     clearOverlay,
     hasOverlay,
     captureClean,
+    captureStats,
     get captureFormat() { return captureFormat; },
     input: {
       moveTo,

@@ -507,6 +507,10 @@
     if (!hasCanvas()) return;
     switch (m.type) {
       case 'RES_STATUS':
+        send({
+          running, status, error: lastError, stats: { ...stats }, cfg: CFG, liveOverlay,
+          captureErrors: window.__SRToolkit?.captureStats?.errors || 0,
+        });
         break;
       case 'RES_TOGGLE':
         running ? stop() : start();

@@ -314,7 +314,7 @@
     if (!hasCanvas()) return;
     switch (m.type) {
       case 'WOOD_STATUS':
-        send({ running, status, error: lastError, stats: { ...stats, queue: queueSize() }, cfg: CFG });
+        send({ running, status, error: lastError, stats: { ...stats, queue: queueSize() }, cfg: CFG, captureErrors: window.__SRToolkit?.captureStats?.errors || 0 });
         break;
       case 'WOOD_TOGGLE':
         running ? stop() : start();

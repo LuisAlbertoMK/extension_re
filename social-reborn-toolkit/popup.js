@@ -41,6 +41,8 @@ let meatNote = null; // transient calibration result or failure reason
 // Transient calibration results / failure reasons, per module.
 const notes = {};
 const noted = (k) => (notes[k] && Date.now() < notes[k].until ? notes[k].text : null);
+// Chrome allows ~2 captures/second; a high count here means the loops are polling too fast.
+const capErr = (r) => (r && r.captureErrors ? ` · ${r.captureErrors} capture errors` : '');
 function calNote(k, r, unit) {
   if (!r) notes[k] = { text: 'no answer from the tab (reload the game page)', until: Date.now() + 8000 };
   else if (r.error) notes[k] = { text: String(r.error).replace(/^Error:\s*/, ''), until: Date.now() + 12000 };
@@ -60,7 +62,7 @@ async function refresh() {
     if (meatNote && Date.now() < meatNote.until) return meatNote.text;
     if (meatCalibration !== null) return `calibrated: ${meatCalibration} icon(s)`;
     if (r.error) return String(r.error);
-    const base = `${r.stats.collected} clicks · ${r.stats.cycles} cycles`;
+    const base = `${r.stats.collected} clicks · ${r.stats.cycles} cycles${capErr(r)}`;
     if (r.running && r.nextCollectionTime) {
       const secs = Math.max(0, Math.ceil((r.nextCollectionTime - Date.now()) / 1000));
       return `${base} · next ${secs}s`;
@@ -73,7 +75,7 @@ async function refresh() {
     const n = noted('wood');
     if (n) return n;
     if (r.error) return String(r.error);
-    return `${r.stats.clicked} marks · ${r.stats.found} seen`;
+    return `${r.stats.clicked} marks · ${r.stats.found} seen${capErr(r)}`;
   });
 
   const resOk = paint('res', res, 'Stop', 'Start', (r) => {
@@ -81,7 +83,7 @@ async function refresh() {
     if (n) return n;
     if (r.error) return String(r.error);
     const s = r.stats;
-    return `${s.meat}🥩 ${s.wood}🪵 ${s.gold}🪙 ${s.stone}🪨 · ${s.chosen} timed`;
+    return `${s.meat}🥩 ${s.wood}🪵 ${s.gold}🪙 ${s.stone}🪨 · ${s.chosen} timed${capErr(r)}`;
   });
 
   if (res && !resOptionFilled) {

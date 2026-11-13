@@ -14,6 +14,7 @@ let bubbleClicks = 0;
 let dialogClicks = 0;
 let failing = false;
 let dyn = null;   // optional live frame provider, used to grow/shrink the world
+let onMsg = null; // the module's chrome.runtime.onMessage listener
 
 function frame(n, y0) {
   const { d } = base(W, H, 11);
@@ -68,6 +69,7 @@ function emptyFrame() {
 const T = shim.load('resources.js',
   '{ start, stop, CFG, stats, detect, dbg: () => ({ running, status, lastError }) }',
   (sb) => {
+    sb.chrome.runtime.onMessage.addListener = (fn) => { onMsg = fn; };
     sb.__SRToolkit = {
       show() {},
       register() {},
@@ -129,6 +131,12 @@ function assert(cond, msg) {
 
   const dlg = T.detect({ width: W, height: H, _data: dialog().data });
   assert(!!dlg.dialog && !!dlg.dialog.target, 'detect recognises the gather-time dialog');
+
+  // The popup reads this message: an empty handler here leaves it with no counters.
+  let status = null;
+  onMsg({ type: 'RES_STATUS' }, {}, (r) => { status = r; });
+  assert(!!status && !!status.stats && typeof status.stats.chosen === 'number',
+    'the status message carries the counters');
 
   // --- start, collect, stop, resume -----------------------------------------
   dialogPending = false;

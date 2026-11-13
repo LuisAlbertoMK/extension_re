@@ -38,7 +38,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     const options = format === 'png'
       ? { format: 'png' }
       : { format: 'jpeg', quality: msg.quality ?? 95 };
-    chrome.tabs.captureVisibleTab(null, options, (dataUrl) => {
+    // Pin the game's own window: `null` means "whichever window is current", so with
+    // another window focused the capture returned that window's tab instead of the game.
+    chrome.tabs.captureVisibleTab(sender.tab?.windowId ?? null, options, (dataUrl) => {
       if (chrome.runtime.lastError) {
         sendResponse({ error: chrome.runtime.lastError.message });
       } else {

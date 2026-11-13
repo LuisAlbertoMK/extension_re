@@ -832,7 +832,7 @@
     if (!document.querySelector('canvas')) return;
     switch (msg.type) {
       case 'MEAT_STATUS':
-        sendResponse({ running, stats, nextCollectionTime, isTabVisible, error: lastError, cfg: CONFIG });
+        sendResponse({ running, stats, nextCollectionTime, isTabVisible, error: lastError, cfg: CONFIG, captureErrors: window.__SRToolkit?.captureStats?.errors || 0 });
         break;
       case 'MEAT_TOGGLE':
         running ? stop() : start();

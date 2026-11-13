@@ -102,6 +102,9 @@ T.api.register({
   assert(!!r && /timed out/.test(r.error), `a stuck capture is reported (${r && r.error})`);
   r = await T.api.captureClean({ timeoutMs: 120 });
   assert(!!r, 'the queue still accepts a capture after a timeout');
+  const cs = T.api.captureStats;
+  assert(!!cs && cs.errors >= 2 && cs.total >= 2,
+    `capture failures are counted for the popup (${cs && cs.errors}/${cs && cs.total})`);
 
   // The HUD runs a 1 s repaint timer; stop it so the test process can exit.
   T.api.hide();
