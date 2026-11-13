@@ -14,6 +14,11 @@
     minPx: 40,                           // píxeles mínimos del color del recurso
     mTop: 0.09, mBottom: 0.14, mLeft: 0.07, mRight: 0.08, // zonas UI excluidas (fracción)
     jitter: 5, gapMin: 350, gapMax: 900, // jitter y pausa entre clicks (ms)
+    // The game takes the first click as a selection and opens the shared "choose time"
+    // dialog with the second one, so two buildings are assigned by a single dialog. 1
+    // disables it and goes back to one bubble per dialog.
+    pairMax: 2,
+    pairBeatMin: 120, pairBeatMax: 260, // pause between the two clicks of a pair
     option: 0,                           // 0=5min(arriba-izq) 1=1h 2=4h 3=8h
     // Wait before picking the gather time. Kept short: the dialog is on screen the whole
     // time and a long wait risks it closing on its own.
@@ -35,7 +40,7 @@
   let sessionEndsAt = 0;
   let liveOverlay = false;               // calibration mode: keep the overlay updated
   let lastResult = { items: [], dialog: null, rejects: [] };
-  const stats = { meat: 0, wood: 0, gold: 0, stone: 0, cycles: 0, found: 0, chosen: 0 };
+  const stats = { meat: 0, wood: 0, gold: 0, stone: 0, cycles: 0, found: 0, chosen: 0, paired: 0 };
 
   const rand = (a, b) => a + Math.random() * (b - a);
   // Right-skewed wait for the schedule; the HUD owns it so the three modules share one
@@ -283,13 +288,14 @@
 
   // Picks the gather time on the dialog. Only the configured button is ever clicked
   // (re-located on every try): falling back to the OTHER buttons could commit a
-  // 1 h / 4 h / 8 h assignment if the dialog is merely slow to close.
+  // 1 h / 4 h / 8 h assignment if the dialog is merely slow to close. The caller owns
+  // the assignment counter, because one dialog can cover more than one building.
   async function chooseTime(alive) {
     for (let attempt = 0; attempt < 3 && alive(); attempt++) {
       const r = attempt === 0 ? await waitForDialog(1500, alive) : await scan();
       if (!r || !r.dialog) {
-        if (attempt > 0) { stats.chosen++; return true; }   // it closed after our click
-        return false;                                       // never opened
+        if (attempt > 0) return true;   // it closed after our click
+        return false;                   // never opened
       }
       if (!r.dialog.target) return false;
       await humanClick(r.dialog.target, alive);
@@ -297,7 +303,7 @@
       while (alive() && Date.now() < end) {
         await sleep(120);
         const r2 = await scan();
-        if (!r2.dialog) { stats.chosen++; return true; }
+        if (!r2.dialog) return true;
       }
     }
     return false;
@@ -310,15 +316,18 @@
     const alive = () => running && my === loopToken;
     stats.cycles++;
     const chosenBefore = stats.chosen;
-    let clicked = 0, empty = 0, dialogFails = 0, pending = null;
+    let clicked = 0, empty = 0, dialogFails = 0;
+    // Bubbles already clicked whose dialog has not appeared yet. The game opens the
+    // shared dialog with the SECOND click, so this holds two buildings when pairing is
+    // on, and exactly one when the dialog opens on the first click.
+    let selected = [];
     const done = new Set();         // "x,y" -> this bubble already got its gather time
     const tries = new Map();        // "x,y" -> clicks that never opened a dialog
     const keyOf = it => Math.round(it.x / 20) + ',' + Math.round(it.y / 20);
 
-    // One pass, one bubble at a time: a click opens the gather-time dialog for THAT
-    // building, so the dialog is resolved immediately and the next bubble is clicked
-    // right after. No queue is built ahead of time, which is what used to skip bubbles
-    // that had not rendered yet when the snapshot was taken.
+    // One pass at a time: bubbles are clicked one after another and the dialog they open
+    // is resolved immediately. No queue is built ahead of time, which is what used to
+    // skip bubbles that had not rendered yet when the snapshot was taken.
     for (let iter = 0; iter < 400 && alive(); iter++) {
       status = 'scanning';
       const r = await scan();
@@ -327,10 +336,15 @@
         if (window.__SRToolkit?.hasOverlay('res')) drawOverlay(r);
         else liveOverlay = false;   // overlay was cleared from the HUD
       }
-      if (r.dialog) {               // the dialog this click just opened
+      if (r.dialog) {               // the dialog the click (or the pair) just opened
         status = 'assigning times';
         if (await chooseTime(alive)) {
-          if (pending) { done.add(pending); pending = null; }
+          // One dialog can assign every building selected before it appeared.
+          const n = Math.max(1, new Set(selected).size);
+          stats.chosen += n;
+          if (n > 1) stats.paired++;
+          for (const k of selected) done.add(k);
+          selected = [];
           dialogFails = 0;
         } else if (++dialogFails >= 3) {
           lastError = 'cannot pick the gather time (check Calibrate)';
@@ -338,21 +352,50 @@
         }
         continue;
       }
-      // No dialog: the previous click did not register on that bubble.
-      if (pending) { tries.set(pending, (tries.get(pending) || 0) + 1); pending = null; }
+      const present = new Set(r.items.map(keyOf));
+      // A selected bubble that is gone was assigned even if the dialog did not report
+      // success (it may open late or close on its own). Count it here exactly once: the
+      // success path clears `selected`, so only an unattributed one reaches this branch.
+      const vanished = selected.filter(k => !present.has(k));
+      if (vanished.length) {
+        stats.chosen += vanished.length;
+        if (vanished.length > 1) stats.paired++;
+        for (const k of vanished) done.add(k);
+      }
+      selected = selected.filter(k => present.has(k));
+      selected = selected.filter(k => present.has(k));
+      // Two clicks and still no dialog: neither registered, so charge both a try.
+      if (selected.length >= CFG.pairMax) {
+        for (const k of selected) tries.set(k, (tries.get(k) || 0) + 1);
+        selected = [];
+      }
       const pool = r.items.filter(x => {
         const k = keyOf(x);
-        return !done.has(k) && (tries.get(k) || 0) < 2;
+        return !done.has(k) && !selected.includes(k) && (tries.get(k) || 0) < 2;
       });
-      if (!pool.length) {           // nothing left (or the bubbles are still rendering)
-        if (++empty >= 3) break;
+      if (!pool.length) {
+        // Every bubble left is already selected and no dialog came: the game wants a
+        // second click, so re-click the selected one. Without this a single remaining
+        // building would never reach the dialog.
+        if (selected.length) {
+          const again = r.items.find(x => keyOf(x) === selected[0]);
+          if (again) {
+            await sleep(gap(CFG.pairBeatMin, CFG.pairBeatMax));
+            if (await humanClick(again, alive)) { clicked++; selected.push(selected[0]); }
+            continue;
+          }
+        }
+        if (++empty >= 3) break;     // nothing left (or the bubbles are still rendering)
         await sleep(400);
         continue;
       }
       empty = 0;
       const it = pool[Math.floor(Math.random() * pool.length)];
-      await sleep(gap(CFG.gapMin, CFG.gapMax));
-      if (await humanClick(it, alive)) { stats[it.type]++; clicked++; pending = keyOf(it); }
+      // The second click of a pair comes fast: a long pause there is what a human would
+      // not do when picking two buildings in a row, and some UIs drop the selection.
+      const beat = selected.length ? gap(CFG.pairBeatMin, CFG.pairBeatMax) : gap(CFG.gapMin, CFG.gapMax);
+      await sleep(beat);
+      if (await humanClick(it, alive)) { stats[it.type]++; clicked++; selected.push(keyOf(it)); }
     }
     if (!alive()) return stats.chosen - chosenBefore;
 
