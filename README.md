@@ -50,6 +50,7 @@ node tests/hud_ui.cjs               # HUD row buttons and calibration reporting
 node tests/hud_input.cjs            # synthetic mouse: movement deltas, screen coords, gap shape
 node tests/config_persist.cjs       # popup choices survive a reload
 node tests/find_recipes.cjs         # tools/find-recipes.js against a fake page
+node tests/package.cjs              # the extension folder is a loadable package
 ```
 
 `node tests/run.cjs --update` rewrites `tests/golden.json` after an intentional
@@ -93,4 +94,7 @@ social-reborn-toolkit/    the extension (manifest v3)
   background.js           debugger attach, CDP input, screenshot capture
   popup.{html,js}
 tests/                    detector and loop harnesses
+tools/                    asset downloader and the console recipe finder
 ```
+
+Load `social-reborn-toolkit/` directly with **Load unpacked**; there is nothing to build.

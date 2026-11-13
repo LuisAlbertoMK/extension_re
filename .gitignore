@@ -1,6 +1,9 @@
 # agent tooling cache, not part of the extension
 .atl/
 
+# build artifacts: the extension is loaded from the folder, zips are throwaway
+*.zip
+
 # downloaded game assets (tools/fetch-assets.cjs)
 game-assets/
 urls.json
