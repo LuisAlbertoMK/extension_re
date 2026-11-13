@@ -48,6 +48,7 @@ node tests/wood_villager.cjs        # a villager that never cuts stops the modul
 node tests/wood_nearest.cjs         # the trunk nearest to the villager is the one cut
 node tests/hud_ui.cjs               # HUD row buttons and calibration reporting
 node tests/hud_input.cjs            # synthetic mouse: movement deltas, screen coords, gap shape
+node tests/find_recipes.cjs         # tools/find-recipes.js against a fake page
 ```
 
 `node tests/run.cjs --update` rewrites `tests/golden.json` after an intentional
@@ -71,6 +72,16 @@ node tools/fetch-assets.cjs --urls urls.json --out game-assets
 
 Re-running is safe: it skips what is already there and keeps walking references from the
 JSON/atlas files it downloads. `--seed <url>` downloads a single index instead of a list.
+
+## Finding the mixer recipes
+
+`tools/find-recipes.js` is a console snippet, not an extension feature: paste it in the
+game tab and it scans the text assets the client already loaded, reporting the ones that
+look like a recipe table (with their top-level keys). It clicks nothing and sends no game
+action, so the server sees the same requests a page reload produces.
+
+Run `performance.setResourceTimingBufferSize(50000)` and reload first, then open the Soul
+Mixer once so its data file is in the list.
 
 ## Layout
 
