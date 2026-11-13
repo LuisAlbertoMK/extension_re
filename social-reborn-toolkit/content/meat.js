@@ -35,8 +35,10 @@
     // Hard session cap: the collector stops itself after a random 20-30 minutes.
     sessionMinMs: 20 * 60 * 1000,
     sessionMaxMs: 30 * 60 * 1000,
-    // Anti-bot: delay before the first click
-    preClickDelay: 300,
+    // Anti-bot: delay before the first click. A range, not a constant: a fixed delay
+    // before every single run is its own signature.
+    preClickDelayMin: 180,
+    preClickDelayMax: 520,
     // Anti-bot: click position jitter (px)
     clickJitter: 3,
     // Cursor travel time bounds (ms). Duration is derived from distance, so a short hop
@@ -77,6 +79,12 @@
     dragMaxMs: 5000,
     dragJitter: 5
   };
+
+  // Right-skewed wait, so the schedule is not a rectangle with hard edges. The HUD owns
+  // the implementation; without it (hud.js not loaded) this keeps the plain uniform one.
+  const gap = (a, b) => (window.__SRToolkit?.humanGap
+    ? window.__SRToolkit.humanGap(a, b)
+    : a + Math.random() * (b - a));
 
   // Confidence score (0-100) for a detected icon, based on how close it is to the
   // ideal white box with a red centre. Used by the calibration overlay to colour
@@ -451,7 +459,7 @@
     }
 
     // Anti-bot: initial delay before the first click
-    await new Promise(resolve => setTimeout(resolve, CONFIG.preClickDelay));
+    await new Promise(resolve => setTimeout(resolve, gap(CONFIG.preClickDelayMin, CONFIG.preClickDelayMax)));
 
     // 'mixed' alternates between one sweep and a click-by-click run: neither a pure
     // dragger nor a pure clicker, which is closer to how a person actually farms.
@@ -526,15 +534,15 @@
 
       // Pause between clicks, on top of the travel time. Occasional long pause so the
       // timing distribution has the heavy tail a human has, instead of being uniform.
-      let pause = CONFIG.clickDelayMin + Math.random() * (CONFIG.clickDelayMax - CONFIG.clickDelayMin);
+      let pause = gap(CONFIG.clickDelayMin, CONFIG.clickDelayMax);
       if (Math.random() < CONFIG.distractionChance) {
-        pause += CONFIG.distractionMin + Math.random() * (CONFIG.distractionMax - CONFIG.distractionMin);
+        pause += gap(CONFIG.distractionMin, CONFIG.distractionMax);
       }
       const rest = pause - (performance.now() - t0 - moveMs);
       if (rest > 5) await new Promise(resolve => setTimeout(resolve, rest));
 
       if (i === pauseAt) {
-        const extra = CONFIG.runPauseMin + Math.random() * (CONFIG.runPauseMax - CONFIG.runPauseMin);
+        const extra = gap(CONFIG.runPauseMin, CONFIG.runPauseMax);
         await new Promise(resolve => setTimeout(resolve, extra));
       }
     }
@@ -671,7 +679,7 @@
     }
 
     // A human opens the game, looks around and collects later - not on the same tick.
-    const wait = CONFIG.startDelayMin + Math.random() * (CONFIG.startDelayMax - CONFIG.startDelayMin);
+    const wait = gap(CONFIG.startDelayMin, CONFIG.startDelayMax);
     nextCollectionTime = Date.now() + wait;
     armTimer(my, wait);
   }
@@ -736,7 +744,7 @@
     // A failing capture backs off instead of stopping the run: the user owns Stop, and
     // a transient capture hiccup must never end a session on its own.
     // Capped so a capture that never recovers still retries every ~10x the normal gap.
-    const delay = (min + Math.random() * (max - min)) * (1 + Math.min(errStreak, 10));
+    const delay = gap(min, max) * (1 + Math.min(errStreak, 10));
     nextCollectionTime = Date.now() + delay;
     armTimer(my, delay);
   }

@@ -227,5 +227,17 @@ formatBtn.addEventListener('click', async () => {
   paintCaptureFormat(next);
 });
 
+// Autostart: the content scripts read these keys when the page loads, and until now
+// there was no way to change them without editing the extension's storage by hand.
+const AUTOSTART = { meatAuto: 'meatAutoStart', woodAuto: 'woodAutoStart', resAuto: 'resAutoStart' };
+
+chrome.storage.local.get(Object.values(AUTOSTART), (saved) => {
+  for (const [id, key] of Object.entries(AUTOSTART)) $(id).checked = !!saved[key];
+});
+
+for (const [id, key] of Object.entries(AUTOSTART)) {
+  $(id).addEventListener('change', (e) => chrome.storage.local.set({ [key]: e.target.checked }));
+}
+
 setInterval(refresh, 1000);
 refresh();

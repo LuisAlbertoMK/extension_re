@@ -376,6 +376,39 @@
 
   const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
+  // Human waits are not uniform. Math.random() * (max - min) + min is a rectangle with
+  // hard edges, and a rectangle is trivially separable from human timing by a KS test
+  // after a few dozen samples. Skewing toward `min` keeps the same bounds but gives the
+  // right-skewed shape (many short waits, few long ones) real people produce.
+  function humanGap(min, max, skew = 1.7) {
+    if (!(max > min)) return Math.max(0, Math.round(min));
+    return Math.round(min + (max - min) * Math.pow(Math.random(), skew));
+  }
+
+  // A trusted mouse event reports screen coordinates offset by the window position and
+  // the browser chrome. Synthetic events that report screenX === clientX stand out.
+  function screenOrigin() {
+    return {
+      x: Math.round(window.screenX || 0),
+      y: Math.round((window.screenY || 0) + Math.max(0, (window.outerHeight || 0) - (window.innerHeight || 0)))
+    };
+  }
+
+  // movementX/movementY is the delta since the previous mouse event, shared by the
+  // pointer and mouse halves of the same physical move. A constructed event keeps both
+  // at 0 forever, which no real cursor does.
+  let lastMove = null;
+  function movementAt(x, y) {
+    const prev = lastMove || { x, y };
+    lastMove = { x, y };
+    return { x: Math.round(x - prev.x), y: Math.round(y - prev.y) };
+  }
+  function withMovement(e, mv) {
+    Object.defineProperty(e, 'movementX', { value: mv.x, configurable: true });
+    Object.defineProperty(e, 'movementY', { value: mv.y, configurable: true });
+    return e;
+  }
+
   // Quadratic bezier between two points with a random perpendicular bend, sampled with
   // ease-in-out: no straight lines and no constant velocity.
   function curve(from, to, steps) {
@@ -437,13 +470,15 @@
     if (inputMode === 'synthetic') {
       const target = el || hitTest(x, y);
       if (!target) return;
+      const o = screenOrigin();
       const opts = {
         bubbles: true, cancelable: true, composed: true,
-        clientX: x, clientY: y, screenX: x, screenY: y, view: window,
+        clientX: x, clientY: y, screenX: x + o.x, screenY: y + o.y, view: window,
         button: -1, buttons: 0, pointerId: 1, pointerType: 'mouse', isPrimary: true
       };
-      target.dispatchEvent(new PointerEvent('pointermove', opts));
-      target.dispatchEvent(new MouseEvent('mousemove', opts));
+      const mv = movementAt(x, y);
+      target.dispatchEvent(withMovement(new PointerEvent('pointermove', opts), mv));
+      target.dispatchEvent(withMovement(new MouseEvent('mousemove', opts), mv));
       return;
     }
     try { await chrome.runtime.sendMessage({ type: 'DEBUGGER_MOVE', x, y }); } catch { /* ignore */ }
@@ -497,6 +532,9 @@
 
     const steps = Math.max(3, Math.min(12, Math.round(dist / 45)));
     const pts = curve(mouse, { x, y }, steps);
+    // The first delta is measured from where the cursor actually is, not from the first
+    // sampled point, or the opening pointermove would report a zero movement.
+    if (!lastMove) lastMove = { x: mouse.x, y: mouse.y };
     // Resolved at the destination: that is the element the click has to reach.
     const target = inputMode === 'synthetic' ? hitTest(x, y) : null;
 
@@ -516,17 +554,20 @@
       // there is no live cached node.
       const el = hitTest(x, y);
       if (!el) return false;
+      const o = screenOrigin();
       const base = {
         bubbles: true, cancelable: true, composed: true,
-        clientX: x, clientY: y, screenX: x, screenY: y, view: window,
+        clientX: x, clientY: y, screenX: x + o.x, screenY: y + o.y, view: window,
         button: 0, detail: 1
       };
+      // Pressing without moving: the cursor is already there, so the delta is 0.
+      const mv = movementAt(x, y);
       const ptr = { ...base, pointerId: 1, pointerType: 'mouse', isPrimary: true };
-      el.dispatchEvent(new PointerEvent('pointerdown', { ...ptr, buttons: 1 }));
-      el.dispatchEvent(new MouseEvent('mousedown', { ...base, buttons: 1 }));
-      el.dispatchEvent(new PointerEvent('pointerup', { ...ptr, buttons: 0 }));
-      el.dispatchEvent(new MouseEvent('mouseup', { ...base, buttons: 0 }));
-      el.dispatchEvent(new MouseEvent('click', { ...base, buttons: 0 }));
+      el.dispatchEvent(withMovement(new PointerEvent('pointerdown', { ...ptr, buttons: 1 }), mv));
+      el.dispatchEvent(withMovement(new MouseEvent('mousedown', { ...base, buttons: 1 }), mv));
+      el.dispatchEvent(withMovement(new PointerEvent('pointerup', { ...ptr, buttons: 0 }), mv));
+      el.dispatchEvent(withMovement(new MouseEvent('mouseup', { ...base, buttons: 0 }), mv));
+      el.dispatchEvent(withMovement(new MouseEvent('click', { ...base, buttons: 0 }), mv));
       return true;
     }
     try {
@@ -546,14 +587,16 @@
     if (inputMode === 'synthetic') {
       const el = hitTest(start.x, start.y);
       if (!el) return false;
+      const o = screenOrigin();
       const base = {
         bubbles: true, cancelable: true, composed: true, view: window,
         button: 0, detail: 1, pointerId: 1, pointerType: 'mouse', isPrimary: true,
       };
       const ev = (type, x, y, buttons) => {
-        const o = { ...base, clientX: x, clientY: y, screenX: x, screenY: y, buttons };
-        if (type[0] === 'p') el.dispatchEvent(new PointerEvent(type, o));
-        else el.dispatchEvent(new MouseEvent(type, o));
+        const r = { ...base, clientX: x, clientY: y, screenX: x + o.x, screenY: y + o.y, buttons };
+        const mv = movementAt(x, y);
+        if (type[0] === 'p') el.dispatchEvent(withMovement(new PointerEvent(type, r), mv));
+        else el.dispatchEvent(withMovement(new MouseEvent(type, r), mv));
       };
       ev('pointerdown', start.x, start.y, 1);
       ev('mousedown', start.x, start.y, 1);
@@ -635,6 +678,7 @@
     hasOverlay,
     captureClean,
     captureStats,
+    humanGap,
     get captureFormat() { return captureFormat; },
     input: {
       moveTo,

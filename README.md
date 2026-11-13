@@ -10,8 +10,8 @@ Chrome extension plus a Node test harness for resource collection in **Social Re
 
 | Module | What it does |
 | --- | --- |
-| `meat` | Detects the white-box / red-centre meat icons on the canvas and clicks them one by one. |
-| `wood` | Detects trunks with green canopy above them and marks the trees. |
+| `meat` | Detects the white-box / red-centre meat icons on the canvas. Three out of four runs sweep the cursor over them with the button held (drag); the fourth clicks them one by one. |
+| `wood` | Detects trunks with green canopy above them and marks the tree nearest to the villager (the last tree it cut), so the walk is the shortest one. |
 | `res` | Detects white resource bubbles, classifies meat/wood/gold/stone, then clicks them one at a time: every click opens the 2x2 gather-time dialog for that building and the configured option is picked before the next bubble. |
 | HUD | In-page panel (Shadow DOM) with a calibration overlay. `Ctrl+Shift+Y` toggles it, which is the only control surface in fullscreen. |
 
@@ -21,9 +21,16 @@ Chrome extension plus a Node test harness for resource collection in **Social Re
 2. **Load unpacked** and select `social-reborn-toolkit/`.
 3. Open the game and reload the page so the content scripts pick up the new build.
 
-The popup controls start/stop, calibration, the meat collect mode and the capture
-format. Input is synthesized (`isTrusted: false`) by default; debugger mode uses CDP and
-raises Chrome's "started debugging this browser" infobar.
+The popup controls start/stop, calibration, the meat collect mode, the gather time, the
+per-module autostart-on-reload and the capture format. Input is synthesized
+(`isTrusted: false`) by default; debugger mode uses CDP and raises Chrome's "started
+debugging this browser" infobar.
+
+Nothing below is a promise of invisibility: `isTrusted` is `false` in synthetic mode and a
+page can read it. What the input layer does do is stop being *trivially* distinguishable —
+cursor paths are eased curves, every move carries real `movementX`/`movementY` deltas,
+screen coordinates include the window and browser-chrome offset, and every wait is drawn
+from a right-skewed distribution instead of a rectangle with hard edges.
 
 ## Tests
 
@@ -38,7 +45,9 @@ node tests/meat_policy.cjs          # 100% click-only pacing
 node tests/res_loop.cjs             # resource collector end to end
 node tests/wood_loop.cjs            # empty map and capture errors never stop the run
 node tests/wood_villager.cjs        # a villager that never cuts stops the module
+node tests/wood_nearest.cjs         # the trunk nearest to the villager is the one cut
 node tests/hud_ui.cjs               # HUD row buttons and calibration reporting
+node tests/hud_input.cjs            # synthetic mouse: movement deltas, screen coords, gap shape
 ```
 
 `node tests/run.cjs --update` rewrites `tests/golden.json` after an intentional

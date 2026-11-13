@@ -39,6 +39,11 @@
   let finish = [], recent = [];
 
   const rand = (a, b) => a + Math.random() * (b - a);
+  // Right-skewed wait for the schedule; the HUD owns it so the three modules share one
+  // distribution. Falls back to plain uniform when the HUD is not loaded.
+  const gap = (a, b) => (window.__SRToolkit?.humanGap
+    ? window.__SRToolkit.humanGap(a, b)
+    : rand(a, b));
   const sleep = ms => new Promise(r => setTimeout(r, ms));
   const hasCanvas = () => !!document.querySelector('canvas');
 
@@ -233,7 +238,7 @@
           // session cap is the only automatic stop.
           if (!noCutStreak) status = 'no trees';
         } else {
-          await sleep(rand(80, 300));
+          await sleep(gap(80, 300));
           if (await clickAt(t.x, t.y)) {
             stats.clicked++; regClick(); last = t; recent.push({ x: t.x, y: t.y, t: Date.now() });
             pendingCut.push({ x: t.x, y: t.y, at: Date.now() + CFG.cutTime + CFG.cutGrace });
@@ -251,7 +256,7 @@
     stats.queue = queueSize();
     // Never stops on its own: a capture hiccup must not end the session - the user owns
     // Stop. Back off instead, so a failing capture is retried slower, not tighter.
-    if (running) timer = setTimeout(() => tick(loopToken), rand(CFG.intMin, CFG.intMax) * (1 + Math.min(errStreak, 10)));
+    if (running) timer = setTimeout(() => tick(loopToken), gap(CFG.intMin, CFG.intMax) * (1 + Math.min(errStreak, 10)));
   }
 
   function start() {

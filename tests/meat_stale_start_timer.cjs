@@ -40,7 +40,7 @@ Object.assign(T.CONFIG, {
   startDelayMin: 0, startDelayMax: 0,
   minDelay: 1000, maxDelay: 1000, dragMinDelay: 1000, dragMaxDelay: 1000,
   clickDelayMin: 0, clickDelayMax: 0, distractionChance: 0, runPauseChance: 0,
-  skipCycleChance: 0, preClickDelay: 0, clickRatioMin: 1, clickRatioMax: 1,
+  skipCycleChance: 0, preClickDelayMin: 0, preClickDelayMax: 0, clickRatioMin: 1, clickRatioMax: 1,
   moveMinMs: 0, moveMaxMs: 0, clickJitter: 0,
   collectMode: 'click',
 });

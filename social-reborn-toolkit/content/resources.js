@@ -38,6 +38,11 @@
   const stats = { meat: 0, wood: 0, gold: 0, stone: 0, cycles: 0, found: 0, chosen: 0 };
 
   const rand = (a, b) => a + Math.random() * (b - a);
+  // Right-skewed wait for the schedule; the HUD owns it so the three modules share one
+  // distribution. Falls back to plain uniform when the HUD is not loaded.
+  const gap = (a, b) => (window.__SRToolkit?.humanGap
+    ? window.__SRToolkit.humanGap(a, b)
+    : rand(a, b));
   const sleep = ms => new Promise(r => setTimeout(r, ms));
   const hasCanvas = () => !!document.querySelector('canvas');
 
@@ -346,7 +351,7 @@
       }
       empty = 0;
       const it = pool[Math.floor(Math.random() * pool.length)];
-      await sleep(rand(CFG.gapMin, CFG.gapMax));
+      await sleep(gap(CFG.gapMin, CFG.gapMax));
       if (await humanClick(it, alive)) { stats[it.type]++; clicked++; pending = keyOf(it); }
     }
     if (!alive()) return stats.chosen - chosenBefore;
@@ -358,7 +363,7 @@
     if (clicked && !assigned) assignFails++;
     else if (assigned) assignFails = 0;
     if (!alive()) return assigned;
-    await sleep(rand(CFG.cycMin, CFG.cycMax));
+    await sleep(gap(CFG.cycMin, CFG.cycMax));
     return assigned;   // tick() reports this in the status line
   }
 
@@ -400,7 +405,7 @@
     // the error stays visible in the HUD/popup.
     // Capped so a capture that never recovers still retries every ~10x the normal gap.
     const backoff = 1 + Math.min(errStreak, 10) + Math.min(assignFails, 10);
-    timer = setTimeout(() => tick(loopToken), rand(CFG.cycMin, CFG.cycMax) * backoff);
+    timer = setTimeout(() => tick(loopToken), gap(CFG.cycMin, CFG.cycMax) * backoff);
   }
 
   function start() {

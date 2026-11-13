@@ -40,8 +40,8 @@ T = shim.load(
 
 Object.assign(T.CONFIG, {
   clickDelayMin: 0, clickDelayMax: 0, distractionChance: 0, runPauseChance: 0,
-  preClickDelay: 0, skipCycleChance: 0, clickRatioMin: 1, clickRatioMax: 1,
-  moveMinMs: 0, moveMaxMs: 1, collectMode: 'click',
+  preClickDelayMin: 0, preClickDelayMax: 0, skipCycleChance: 0,
+  clickRatioMin: 1, clickRatioMax: 1, moveMinMs: 0, moveMaxMs: 1, collectMode: 'click',
 });
 
 function assert(c, m) {
