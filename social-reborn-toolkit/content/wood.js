@@ -15,6 +15,7 @@
     foreignMax: 0.15, canopyMin: 0.5, // isolation: max % non-green around / min % green canopy above
     clickOffsetY: -4,             // move the click up toward the canopy
     jitter: 2,
+    nearestTiePx: 15,             // trees within this much of the nearest one are an even walk
     mTop: 90, mBottom: 150, mLeft: 90, mRight: 100, // excluded UI zones (CSS px)
     // Hard session cap: the cutter stops itself after a random 20-30 minutes.
     sessionMinMs: 20 * 60 * 1000,
@@ -154,18 +155,23 @@
     return scanOnce('png');
   }
 
+  // The villager stands where it last cut, so the trunk nearest to that point is the
+  // shortest walk. Distance to the previous click is the stand-in for distance to the
+  // villager: it is the same spot, and no sprite match is needed for it.
   function pick(trees) {
     const now = Date.now(); recent = recent.filter(p => now - p.t < 25000);
     const c = trees.filter(t => !recent.some(p => Math.hypot(p.x - t.x, p.y - t.y) < 10));
     if (!c.length) return null;
-    if (last) c.sort((a, b) => Math.hypot(a.x - last.x, a.y - last.y) - Math.hypot(b.x - last.x, b.y - last.y));
-    // Fisher-Yates: sort(() => Math.random() - 0.5) is a biased shuffle, not a
-    // uniform one, so "pick one of the 3 nearest" would not really be random.
-    else for (let i = c.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [c[i], c[j]] = [c[j], c[i]];
-    }
-    return c[Math.floor(Math.random() * Math.min(3, c.length))];
+    // Nothing cut yet in this session: there is no villager position to aim at.
+    if (!last) return c[Math.floor(Math.random() * c.length)];
+    const ref = last;
+    const dist = (t) => Math.hypot(t.x - ref.x, t.y - ref.y);
+    c.sort((a, b) => dist(a) - dist(b));
+    // Trees that are practically the same walk: choose between them so the pick is not
+    // a frozen arithmetic result, but never walk past one to reach a farther tree.
+    const nearest = dist(c[0]);
+    const tie = c.filter(t => dist(t) <= nearest + CFG.nearestTiePx);
+    return tie[Math.floor(Math.random() * tie.length)];
   }
 
   async function clickAt(x, y) {

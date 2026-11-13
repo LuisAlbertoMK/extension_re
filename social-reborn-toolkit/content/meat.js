@@ -63,13 +63,14 @@
     enabled: true,
     // 'drag' sweeps the cursor over every icon with the button held (one gesture);
     // 'click' clicks them one by one. Drag is much faster but only works if the game
-    // collects on cursor-over while pressed. Pinned to click: dragging skips icons that
-    // do not register the sweep, and the goal is to collect everything.
-    collectMode: 'click',
+    // collects on cursor-over while pressed. 'mixed' is the requested default: drag on
+    // three out of four cycles (75%), click one by one on the rest.
+    collectMode: 'mixed',
     // Probability that a 'mixed' cycle sweeps instead of clicking one by one. It drifts
-    // from the low value to the high one across the session instead of staying fixed.
-    mixedDragChanceMin: 0.3,
-    mixedDragChanceMax: 0.7,
+    // from the low value to the high one across the session instead of staying fixed,
+    // averaging the requested 75% drag / 25% click split.
+    mixedDragChanceMin: 0.7,
+    mixedDragChanceMax: 0.8,
     // Drag speed in px/ms and the hard duration cap for one gesture.
     dragSpeed: 0.9,
     dragMinMs: 3000,

@@ -1,6 +1,6 @@
-// Pins the requested meat-collection policy: every detected icon, clicked one by one,
-// 20% faster than the original pacing. Guards against a later edit quietly restoring
-// the anti-bot skips (12% of runs) or the mixed drag mode.
+// Pins the requested meat-collection policy: every detected icon is collected, 20% faster
+// than the original pacing, and three out of four cycles sweep (drag) instead of clicking
+// one by one. Guards against a later edit quietly restoring the anti-bot run skips.
 const shim = require('./shim.cjs');
 
 const T = shim.load('meat.js', '{ CONFIG }', (sb) => {
@@ -14,7 +14,12 @@ function assert(cond, msg) {
   if (!cond) process.exitCode = 1;
 }
 
-assert(C.collectMode === 'click', `clicks one by one (mode: ${C.collectMode})`);
+assert(C.collectMode === 'mixed', `drags by default and clicks the rest (mode: ${C.collectMode})`);
+// 75% drag / 25% click: the drift band averages 0.75, so the split holds across a session
+// without being the same constant every cycle.
+const dragShare = (C.mixedDragChanceMin + C.mixedDragChanceMax) / 2;
+assert(Math.abs(dragShare - 0.75) < 0.03,
+  `three of four cycles sweep (drag share ~${dragShare.toFixed(2)})`);
 assert(C.skipCycleChance === 0, `never skips a run (skipCycleChance: ${C.skipCycleChance})`);
 assert(C.clickRatioMin === 1 && C.clickRatioMax === 1,
   `clicks every detected icon (ratio: ${C.clickRatioMin}-${C.clickRatioMax})`);
