@@ -48,6 +48,7 @@ node tests/wood_villager.cjs        # a villager that never cuts stops the modul
 node tests/wood_nearest.cjs         # the trunk nearest to the villager is the one cut
 node tests/hud_ui.cjs               # HUD row buttons and calibration reporting
 node tests/hud_input.cjs            # synthetic mouse: movement deltas, screen coords, gap shape
+node tests/config_persist.cjs       # popup choices survive a reload
 node tests/find_recipes.cjs         # tools/find-recipes.js against a fake page
 ```
 

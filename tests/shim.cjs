@@ -38,7 +38,13 @@ function makeSandbox() {
     },
     chrome: {
       runtime: { onMessage: { addListener() {} }, sendMessage: () => Promise.resolve({}) },
-      storage: { local: { get: (k, f) => f({}) }, onChanged: { addListener() {} } },
+      storage: {
+        local: {
+          get: (k, f) => f({}),
+          set: (v, f) => { if (f) f(); },
+        },
+        onChanged: { addListener() {} },
+      },
     },
   };
   s.window = s;

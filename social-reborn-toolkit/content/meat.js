@@ -863,6 +863,12 @@
         break;
       case 'MEAT_CONFIG':
         applyConfig(msg.config || {});
+        // Persisted, not just applied: a page reload used to drop every choice back to
+        // the defaults, and with autostart on the module then ran with settings the user
+        // never picked. The storage write merges so one field cannot wipe the others.
+        chrome.storage.local.get(['meatConfig'], ({ meatConfig }) => {
+          chrome.storage.local.set({ meatConfig: { ...(meatConfig || {}), ...(msg.config || {}) } });
+        });
         sendResponse({ ok: true, cfg: CONFIG });
         break;
       case 'MEAT_CALIBRATE':
@@ -899,7 +905,10 @@
 
   // Autostart only in the frame that owns the game canvas: the manifest injects into
   // every frame, and each one would otherwise run its own capture/click loop.
-  chrome.storage.local.get(['meatAutoStart'], ({ meatAutoStart }) => {
+  chrome.storage.local.get(['meatAutoStart', 'meatConfig'], ({ meatAutoStart, meatConfig }) => {
+    // The stored settings must be in place before the module can start, or autostart
+    // begins a session with the defaults (e.g. the click mode) the user never chose.
+    if (meatConfig && typeof meatConfig === 'object') applyConfig(meatConfig);
     if (!meatAutoStart) return;
     let tries = 0;
     const arm = () => { if (document.querySelector('canvas')) start(); else if (++tries < 60) setTimeout(arm, 500); };

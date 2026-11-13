@@ -534,6 +534,11 @@
         break;
       case 'RES_CONFIG':
         Object.assign(CFG, m.config || {});
+        // Persisted: the gather time is a game decision, and losing it on reload meant
+        // the module assigned 5 min to every building after autostart.
+        chrome.storage.local.get(['resConfig'], ({ resConfig }) => {
+          chrome.storage.local.set({ resConfig: { ...(resConfig || {}), ...(m.config || {}) } });
+        });
         send({ ok: true, cfg: CFG });
         break;
       case 'RES_CALIBRATE':
@@ -561,7 +566,10 @@
 
   // Autostart only in the frame that owns the game canvas: the manifest injects into
   // every frame, and each one would otherwise run its own capture/click loop.
-  chrome.storage.local.get(['resAutoStart'], ({ resAutoStart }) => {
+  chrome.storage.local.get(['resAutoStart', 'resConfig'], ({ resAutoStart, resConfig }) => {
+    // Apply the stored gather time before autostart, or the session begins assigning
+    // 5 min to every building regardless of what the user picked.
+    if (resConfig && typeof resConfig === 'object') Object.assign(CFG, resConfig);
     if (!resAutoStart) return;
     let tries = 0;
     const arm = () => { if (hasCanvas()) start(); else if (++tries < 60) setTimeout(arm, 500); };

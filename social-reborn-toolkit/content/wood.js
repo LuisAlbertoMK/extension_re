@@ -160,6 +160,14 @@
     return scanOnce('png');
   }
 
+  // Streak advance for one batch of overdue clicks, independent of their order. Returns
+  // the new streak: any tree that did fall proves the villager is working.
+  function cutStreak(streak, due, trees) {
+    if (!due.length) return streak;
+    const missed = due.filter(p => trees.some(x => Math.hypot(x.x - p.x, x.y - p.y) < 10)).length;
+    return missed === due.length ? streak + missed : 0;
+  }
+
   // The villager stands where it last cut, so the trunk nearest to that point is the
   // shortest walk. Distance to the previous click is the stand-in for distance to the
   // villager: it is the same spot, and no sprite match is needed for it.
@@ -220,11 +228,12 @@
         const now = Date.now();
         const due = pendingCut.filter(p => now >= p.at);
         if (due.length) pendingCut = pendingCut.filter(p => now < p.at);
-        for (const p of due) {
-          if (trees.some(x => Math.hypot(x.x - p.x, x.y - p.y) < 10)) {
-            noCutStreak++;
-          } else noCutStreak = 0;
-        }
+        // Judge the whole batch at once. Mutating one counter per item made the verdict
+        // depend on the batch order: [cut, still, still] ended at 2 while [still, still,
+        // cut] ended at 0 for the same facts, and the first shape is the common one
+        // because the queue is FIFO. One tree that did fall proves the villager is
+        // working; the rest are simply still being walked to.
+        noCutStreak = cutStreak(noCutStreak, due, trees);
         if (noCutStreak >= CFG.noCutLimit) {
           stop('villager is not cutting (dead or busy)');
           return;
