@@ -543,6 +543,8 @@
   async function collectCycle() {
     if (!running || !CONFIG.enabled) return;
     if (!isTabVisible) {
+      // Silently returning here looked exactly like "the module does nothing".
+      lastError = 'paused: the game tab is in the background';
       return;
     }
 
@@ -663,6 +665,7 @@
     window.__SRToolkit?.show(true);
 
     if (!isTabVisible) {
+      lastError = 'cannot start: the game tab is in the background';
       return;
     }
 
