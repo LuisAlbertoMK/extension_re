@@ -17,7 +17,10 @@
     // The game takes the first click as a selection and opens the shared "choose time"
     // dialog with the second one, so two buildings are assigned by a single dialog. 1
     // disables it and goes back to one bubble per dialog.
-    pairMax: 2,
+    // Pairing is OFF by default: the game opens the dialog on the FIRST click, so a second
+    // click lands inside the dialog and the assignment never happens. Set it to 2 only if
+    // clicking two buildings really does raise a single shared dialog.
+    pairMax: 1,
     pairBeatMin: 120, pairBeatMax: 260, // pause between the two clicks of a pair
     // A round is over after this many assignments: the map stops handing out bubbles
     // until the workers finish, so scanning is pointless until then.
@@ -348,6 +351,7 @@
     // on, and exactly one when the dialog opens on the first click.
     let selected = [];
     const done = new Set();         // "x,y" -> this bubble already got its gather time
+    const retried = new Set();      // "x,y" -> bubble already re-clicked once this cycle
     const tries = new Map();        // "x,y" -> clicks that never opened a dialog
     const keyOf = it => Math.round(it.x / 20) + ',' + Math.round(it.y / 20);
 
@@ -403,9 +407,12 @@
         // Every bubble left is already selected and no dialog came: the game wants a
         // second click, so re-click the selected one. Without this a single remaining
         // building would never reach the dialog.
-        if (selected.length) {
+        // One retry per bubble, never a loop: the dialog stays open when a click lands
+        // inside it, and hammering the same spot is exactly how that happens.
+        if (selected.length && !retried.has(selected[0])) {
           const again = r.items.find(x => keyOf(x) === selected[0]);
           if (again) {
+            retried.add(selected[0]);
             await sleep(gap(CFG.pairBeatMin, CFG.pairBeatMax));
             if (await humanClick(again, alive)) { clicked++; selected.push(selected[0]); }
             continue;

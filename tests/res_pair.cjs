@@ -65,6 +65,7 @@ const T = shim.load('resources.js',
 Object.assign(T.CFG, {
   cycMin: 20, cycMax: 20, gapMin: 0, gapMax: 0, pairBeatMin: 0, pairBeatMax: 0,
   selMin: 0, selMax: 0, jitter: 0,
+  pairMax: 2,          // opt-in: this test is the two-buildings-per-dialog path
 });
 
 const wait = (ms) => new Promise(r => setTimeout(r, ms));
