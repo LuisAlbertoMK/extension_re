@@ -83,7 +83,12 @@ async function refresh() {
     if (n) return n;
     if (r.error) return String(r.error);
     const s = r.stats;
-    return `${s.meat}🥩 ${s.wood}🪵 ${s.gold}🪙 ${s.stone}🪨 · ${s.chosen} timed${capErr(r)}`;
+    const round = r.batch ? ` · ${r.round}/${r.batch}` : '';
+    if (r.nextRoundAt && r.nextRoundAt > Date.now()) {
+      const min = Math.max(1, Math.ceil((r.nextRoundAt - Date.now()) / 60000));
+      return `${s.chosen} timed${round} · next round in ${min}m${capErr(r)}`;
+    }
+    return `${s.meat}🥩 ${s.wood}🪵 ${s.gold}🪙 ${s.stone}🪨 · ${s.chosen} timed${round}${capErr(r)}`;
   });
 
   if (res && !resOptionFilled) {

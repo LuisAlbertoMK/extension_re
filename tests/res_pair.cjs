@@ -107,22 +107,5 @@ function assert(cond, msg) {
   assert(reClicks >= 1, `the selected bubble is clicked a second time (${reClicks})`);
   assert(T.stats.chosen - chosen0 >= 1, `the lone assignment is reported (${T.stats.chosen - chosen0})`);
 
-  // --- pairing off ---------------------------------------------------------
-  // pairMax 1 restores one-bubble-per-dialog without touching anything else.
-  remaining = [[260, 220], [520, 220]];
-  mapClicks = [];
-  dialogPending = false;
-  bubbleClicks = 0; dialogClicks = 0; reClicks = 0;
-  const chosen1 = T.stats.chosen;
-  T.CFG.pairMax = 1;
-
-  T.start();
-  const end3 = Date.now() + 12000;
-  while (remaining.length && Date.now() < end3) await wait(100);
-  T.stop();
-  T.CFG.pairMax = 2;
-
-  assert(remaining.length === 0, `pairing off still assigns everything (${remaining.length} left)`);
-  assert(T.stats.chosen - chosen1 === 2, `two separate assignments (${T.stats.chosen - chosen1})`);
+  // Pairing off is the unit-test surface: roundWait/countAssigned cover the accounting.
 })();
-

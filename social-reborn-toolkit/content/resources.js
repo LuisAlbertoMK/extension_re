@@ -19,6 +19,10 @@
     // disables it and goes back to one bubble per dialog.
     pairMax: 2,
     pairBeatMin: 120, pairBeatMax: 260, // pause between the two clicks of a pair
+    // A round is over after this many assignments: the map stops handing out bubbles
+    // until the workers finish, so scanning is pointless until then.
+    batch: 16,
+    batchMin: 6 * 60 * 1000, batchMax: 7 * 60 * 1000,
     option: 0,                           // 0=5min(arriba-izq) 1=1h 2=4h 3=8h
     // Wait before picking the gather time. Kept short: the dialog is on screen the whole
     // time and a long wait risks it closing on its own.
@@ -30,6 +34,10 @@
   };
 
   let running = false, timer = null, status = 'idle';
+  // Assignments in the current round, and how long the next wake-up should wait. The
+  // round counter is what decides between "look again in 5 s" and "everyone is working,
+  // come back in 6 minutes".
+  let roundCount = 0, pendingWait = 0, nextRoundAt = 0;
   // One chain at a time: every start/stop bumps the token and a callback carrying an
   // older token is ignored. Without it, a scan that was still in flight when the user
   // pressed Stop and then Start would reschedule itself next to the new chain.
@@ -40,7 +48,7 @@
   let sessionEndsAt = 0;
   let liveOverlay = false;               // calibration mode: keep the overlay updated
   let lastResult = { items: [], dialog: null, rejects: [] };
-  const stats = { meat: 0, wood: 0, gold: 0, stone: 0, cycles: 0, found: 0, chosen: 0, paired: 0 };
+  const stats = { meat: 0, wood: 0, gold: 0, stone: 0, cycles: 0, found: 0, chosen: 0, paired: 0, round: 0 };
 
   const rand = (a, b) => a + Math.random() * (b - a);
   // Right-skewed wait for the schedule; the HUD owns it so the three modules share one
@@ -309,6 +317,24 @@
     return false;
   }
 
+  // Single place that records an assignment: the round counter drives the long pause, so
+  // it must move together with the number the popup shows.
+  function countAssigned(n) {
+    stats.chosen += n;
+    roundCount += n;
+    stats.round = roundCount;
+  }
+
+  // How long to wait before looking at the map again. A finished round waits for the
+  // workers (6-7 min); anything else keeps the short cycle gap. Resets the round.
+  function roundWait() {
+    if (roundCount < CFG.batch) return 0;
+    roundCount = 0;
+    stats.round = 0;
+    nextRoundAt = Date.now() + gap(CFG.batchMin, CFG.batchMax);
+    return nextRoundAt - Date.now();
+  }
+
   async function cycle(my) {
     // `running` can be true again by the time an old cycle wakes up (Stop + Start), so
     // every wait must also prove this cycle still owns the chain. Without it, a cycle
@@ -341,7 +367,7 @@
         if (await chooseTime(alive)) {
           // One dialog can assign every building selected before it appeared.
           const n = Math.max(1, new Set(selected).size);
-          stats.chosen += n;
+          countAssigned(n);
           if (n > 1) stats.paired++;
           for (const k of selected) done.add(k);
           selected = [];
@@ -358,7 +384,7 @@
       // success path clears `selected`, so only an unattributed one reaches this branch.
       const vanished = selected.filter(k => !present.has(k));
       if (vanished.length) {
-        stats.chosen += vanished.length;
+        countAssigned(vanished.length);
         if (vanished.length > 1) stats.paired++;
         for (const k of vanished) done.add(k);
       }
@@ -406,6 +432,14 @@
     if (clicked && !assigned) assignFails++;
     else if (assigned) assignFails = 0;
     if (!alive()) return assigned;
+    const pause = roundWait();
+    if (pause) {
+      // The whole map is busy: there is nothing to click until the workers finish, and
+      // scanning every few seconds for six minutes only burns captures.
+      pendingWait = pause;
+      status = `round done (${CFG.batch}), waiting ${Math.round(pause / 60000)} min`;
+      return assigned;
+    }
     await sleep(gap(CFG.cycMin, CFG.cycMax));
     return assigned;   // tick() reports this in the status line
   }
@@ -448,7 +482,11 @@
     // the error stays visible in the HUD/popup.
     // Capped so a capture that never recovers still retries every ~10x the normal gap.
     const backoff = 1 + Math.min(errStreak, 10) + Math.min(assignFails, 10);
-    timer = setTimeout(() => tick(loopToken), gap(CFG.cycMin, CFG.cycMax) * backoff);
+    // The round pause is already a human-scale wait, so the error backoff does not stack
+    // on top of it: 6-7 minutes is the answer, not 60.
+    const delay = pendingWait || gap(CFG.cycMin, CFG.cycMax) * backoff;
+    pendingWait = 0;
+    timer = setTimeout(() => tick(loopToken), delay);
   }
 
   function start() {
@@ -457,6 +495,9 @@
     lastError = '';
     errStreak = 0;
     assignFails = 0;
+    // A new session starts a new round: carrying the old count over would send it into
+    // the 6-minute pause after a handful of assignments.
+    roundCount = 0; pendingWait = 0; nextRoundAt = 0; stats.round = 0;
     status = 'starting';
     const my = ++loopToken;
     const cap = CFG.sessionMinMs + Math.random() * (CFG.sessionMaxMs - CFG.sessionMinMs);
@@ -558,6 +599,7 @@
         send({
           running, status, error: lastError, stats: { ...stats }, cfg: CFG, liveOverlay,
           captureErrors: window.__SRToolkit?.captureStats?.errors || 0,
+          round: roundCount, batch: CFG.batch, nextRoundAt,
         });
         break;
       case 'RES_TOGGLE':
