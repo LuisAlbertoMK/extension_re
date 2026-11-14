@@ -45,6 +45,7 @@ node tests/meat_policy.cjs          # 100% click-only pacing
 node tests/res_loop.cjs             # resource collector end to end
 node tests/res_pair.cjs             # two buildings per gather-time dialog
 node tests/res_round.cjs            # 16 assignments per round, then a 6-7 min pause
+node tests/res_dialog.cjs           # the dialog is not fabricated from the UI panels
 node tests/wood_loop.cjs            # empty map and capture errors never stop the run
 node tests/wood_villager.cjs        # a villager that never cuts stops the module
 node tests/wood_nearest.cjs         # the trunk nearest to the villager is the one cut

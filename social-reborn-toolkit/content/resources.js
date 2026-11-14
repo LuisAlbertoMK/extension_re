@@ -236,15 +236,27 @@
       for (const it of r.items) if (!items.some(o => Math.hypot(o.x - it.x, o.y - it.y) < it.w * 0.6)) items.push(it);
     }
 
-    // Dialog: >=3 "choose" buttons in a 2x2 grid.
+    // Dialog: a 2x2 grid of "choose" buttons, searched only in the middle of the screen.
+    // The top bar and the building panel at the bottom contain white blobs of the same
+    // size; treating those as buttons fabricated a dialog, which blanks every bubble for
+    // that frame (`items: dialog ? [] : items`) and made the collector click a UI panel.
     let dialog = null;
-    if (btns.length >= 3) {
-      btns.sort((a, b) => a.y - b.y);
-      const top = btns.filter(b => b.y <= btns[0].y + 30).sort((a, b) => a.x - b.x);
-      const bot = btns.filter(b => b.y > btns[0].y + 30).sort((a, b) => a.x - b.x);
-      if (top.length >= 1 && bot.length >= 1) {
+    const grid = btns.filter(b =>
+      b.x >= innerWidth * 0.05 && b.x <= innerWidth * 0.95 &&
+      b.y >= innerHeight * 0.12 && b.y <= innerHeight * 0.80);
+    if (grid.length >= 4) {
+      const rows = [];
+      for (const b of grid.sort((a, b) => a.y - b.y)) {
+        const row = rows.find(r => Math.abs(r.y - b.y) <= 30);
+        if (row) row.items.push(b); else rows.push({ y: b.y, items: [b] });
+      }
+      const two = rows.filter(r => r.items.length >= 2);
+      if (two.length >= 2) {
+        two.sort((a, b) => a.y - b.y);
+        const top = two[0].items.slice().sort((a, b) => a.x - b.x);
+        const bot = two[1].items.slice().sort((a, b) => a.x - b.x);
         const row = CFG.option >= 2 ? bot : top;
-        dialog = { target: row[CFG.option % 2] || null, btns };
+        dialog = { target: row[CFG.option % 2] || row[0] || null, btns: grid };
       }
     }
     rej = rej.filter(r => !items.some(o => Math.hypot(o.x - r.x, o.y - r.y) < r.w * 0.6));
@@ -295,6 +307,18 @@
       await sleep(150);
     }
     return null;
+  }
+
+  // A dialog that will not close is worse than a missed assignment: every later click
+  // lands inside it and the collector keeps hammering the same spot. Escape is the only
+  // way out that does not risk committing a duration we did not choose.
+  function closeDialog() {
+    const ev = { key: 'Escape', code: 'Escape', keyCode: 27, which: 27, bubbles: true, cancelable: true };
+    try {
+      const target = document.activeElement || document.body || document;
+      target.dispatchEvent(new KeyboardEvent('keydown', ev));
+      target.dispatchEvent(new KeyboardEvent('keyup', ev));
+    } catch { /* no KeyboardEvent in this frame */ }
   }
 
   // Picks the gather time on the dialog. Only the configured button is ever clicked
@@ -377,6 +401,10 @@
           selected = [];
           dialogFails = 0;
         } else if (++dialogFails >= 3) {
+          // Give up on this dialog and clear it, so the next cycle starts on a clean map
+          // instead of clicking into the same stale window.
+          closeDialog();
+          selected = [];
           lastError = 'cannot pick the gather time (check Calibrate)';
           break;
         }
