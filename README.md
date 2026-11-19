@@ -53,6 +53,7 @@ node tests/hud_ui.cjs               # HUD row buttons and calibration reporting
 node tests/hud_input.cjs            # synthetic mouse: movement deltas, screen coords, gap shape
 node tests/config_persist.cjs       # popup choices survive a reload
 node tests/find_recipes.cjs         # tools/find-recipes.js against a fake page
+node tests/dump_data.cjs            # tools/dump-data.js against a fake page
 node tests/package.cjs              # the extension folder is a loadable package
 ```
 
@@ -77,6 +78,12 @@ node tools/fetch-assets.cjs --urls urls.json --out game-assets
 
 Re-running is safe: it skips what is already there and keeps walking references from the
 JSON/atlas files it downloads. `--seed <url>` downloads a single index instead of a list.
+
+## Dumping the client data
+
+	ools/dump-data.js is a console snippet that lists every text asset the client already
+loaded with its size and top-level keys, so you can tell which file holds the building
+times, troop stats or mixer recipes before downloading anything. It only reads.
 
 ## Finding the mixer recipes
 
