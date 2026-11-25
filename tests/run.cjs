@@ -32,19 +32,6 @@ function woodFrame(w, h, seed) {
   return { w, h, data: d };
 }
 
-function resFrame(w, h, seed) {
-  const { d, r } = base(w, h, seed);
-  const cols = [[220, 40, 40], [150, 95, 45], [220, 190, 40], [150, 150, 150]];
-  for (let k = 0; k < 8; k++) {
-    const bw = 32 + Math.floor(r() * 26), bh = 32 + Math.floor(r() * 26);
-    const x = 140 + Math.floor(r() * (w - 300)), y = 160 + Math.floor(r() * (h - 340));
-    rect(d, w, x, y, bw, bh, 250, 250, 250);
-    const c = cols[k % 4];
-    rect(d, w, x + ((bw - 12) >> 1), y + ((bh - 12) >> 1), 12, 12, c[0], c[1], c[2]);
-  }
-  return { w, h, data: d };
-}
-
 const SIZE = [[1600, 900]];
 
 async function measure(name, file, exp) {
@@ -56,7 +43,7 @@ async function measure(name, file, exp) {
       const r = await T.analyzeScreenshot('x');
       rows.push(r.targets.map(t => [t.canvasX, t.canvasY, t.boxW, t.boxH]).sort());
     } else {
-      const f = name === 'wood' ? woodFrame(w, h, 7) : resFrame(w, h, 7);
+      const f = woodFrame(w, h, 7);
       const out = T.detect({ width: w, height: h, _data: f.data });
       const list = Array.isArray(out) ? out : out.items;
       rows.push(list.map(t => [Math.round(t.x), Math.round(t.y), t.size || 0]).sort());
@@ -73,7 +60,6 @@ async function measure(name, file, exp) {
   for (const [name, file, exp] of [
     ['meat', 'meat.js', '{ analyzeScreenshot }'],
     ['wood', 'wood.js', '{ detect }'],
-    ['res', 'resources.js', '{ detect }'],
   ]) {
     const rows = await measure(name, file, exp);
     next[name] = rows;

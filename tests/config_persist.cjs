@@ -48,15 +48,3 @@ assert(saved && saved.clickDelayMax === 2222,
   `the new value is stored (${saved && saved.clickDelayMax})`);
 assert(saved && saved.collectMode === 'click' && saved.clickDelayMin === 1111,
   'storing one field does not wipe the others');
-
-// --- resources --------------------------------------------------------------
-const res = load('resources.js', '{ CFG }', { resConfig: { option: 3 } });
-assert(res.T.CFG.option === 3, `the stored gather time is applied at load (${res.T.CFG.option})`);
-assert(res.T.CFG.cycMin === 5000, `unrelated defaults are untouched (${res.T.CFG.cycMin})`);
-
-reply = null;
-res.listeners[0]({ type: 'RES_CONFIG', config: { option: 1 } }, {}, (r) => { reply = r; });
-assert(reply && reply.ok === true, 'RES_CONFIG answers ok');
-assert(res.T.CFG.option === 1, `RES_CONFIG applies right away (${res.T.CFG.option})`);
-const savedRes = res.writes[0] && res.writes[0].resConfig;
-assert(savedRes && savedRes.option === 1, `the gather time is persisted (${savedRes && savedRes.option})`);

@@ -1,6 +1,8 @@
-// popup.js — minimal control surface for the three modules.
+// popup.js — minimal control surface for the modules of this branch.
 const $ = (id) => document.getElementById(id);
-$('ver').textContent = 'v' + chrome.runtime.getManifest().version;
+// Channel label: `main` ships wood + meat; `pruebas` also carries resources.
+const CHANNEL = 'main';
+$('ver').textContent = `v${chrome.runtime.getManifest().version} (${CHANNEL})`;
 
 async function activeTab() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -49,14 +51,12 @@ function calNote(k, r, unit) {
   else if (r.error) notes[k] = { text: String(r.error).replace(/^Error:\s*/, ''), until: Date.now() + 12000 };
   else notes[k] = { text: `calibrated: ${r.n} ${unit}`, until: Date.now() + 6500 };
 }
-let resOptionFilled = false;
 let meatModeFilled = false;
 
 async function refresh() {
-  const [meat, wood, res] = await Promise.all([
+  const [meat, wood] = await Promise.all([
     send({ type: 'MEAT_STATUS' }),
-    send({ type: 'WOOD_STATUS' }),
-    send({ type: 'RES_STATUS' })
+    send({ type: 'WOOD_STATUS' })
   ]);
 
   const meatOk = paint('meat', meat, 'Stop', 'Start', (r) => {
@@ -79,30 +79,12 @@ async function refresh() {
     return `${r.stats.clicked} marks · ${r.stats.found} seen${capErr(r)}`;
   });
 
-  const resOk = paint('res', res, 'Stop', 'Start', (r) => {
-    const n = noted('res');
-    if (n) return n;
-    if (r.error) return String(r.error);
-    const s = r.stats;
-    const round = r.batch ? ` · ${r.round}/${r.batch}` : '';
-    if (r.nextRoundAt && r.nextRoundAt > Date.now()) {
-      const min = Math.max(1, Math.ceil((r.nextRoundAt - Date.now()) / 60000));
-      return `${s.chosen} timed${round} · next round in ${min}m${capErr(r)}`;
-    }
-    return `${s.meat}🥩 ${s.wood}🪵 ${s.gold}🪙 ${s.stone}🪨 · ${s.chosen} timed${round}${capErr(r)}`;
-  });
-
-  if (res && !resOptionFilled) {
-    $('resOption').value = String(res.cfg.option);
-    resOptionFilled = true;
-  }
-
   if (meat && !meatModeFilled) {
     $('meatMode').value = meat.cfg.collectMode || 'click';
     meatModeFilled = true;
   }
 
-  $('foot').textContent = meatOk || woodOk || resOk
+  $('foot').textContent = meatOk || woodOk
     ? 'Ctrl+Shift+Y toggles the HUD in fullscreen'
     : 'open the game tab and reload the page';
 }
@@ -114,11 +96,6 @@ $('meatToggle').addEventListener('click', async () => {
 
 $('woodToggle').addEventListener('click', async () => {
   await send({ type: 'WOOD_TOGGLE' });
-  refresh();
-});
-
-$('resToggle').addEventListener('click', async () => {
-  await send({ type: 'RES_TOGGLE' });
   refresh();
 });
 
@@ -145,17 +122,6 @@ $('meatCal').addEventListener('click', async () => {
 $('woodCal').addEventListener('click', async () => {
   calNote('wood', await send({ type: 'WOOD_CALIBRATE' }), 'tree(s)');
   refresh();
-});
-
-$('resCal').addEventListener('click', async () => {
-  calNote('res', await send({ type: 'RES_CALIBRATE' }), 'bubble(s)');
-  refresh();
-});
-
-// Gather-time choice for the resource bubbles. Without this the module kept its
-// default (0 = 5 min) no matter what the popup showed.
-$('resOption').addEventListener('change', async (e) => {
-  await send({ type: 'RES_CONFIG', config: { option: Number(e.target.value) } });
 });
 
 $('meatApply').addEventListener('click', async () => {
@@ -251,8 +217,7 @@ $('hudToggle').addEventListener('click', async () => {
 // Capture encoding: 'jpeg' is ~10x faster to encode but lossy (4:2:0 chroma
 // subsampling softens the thin white border the meat detector looks for). 'png' is
 // lossless. Both modules retry with PNG when a fast capture finds nothing, so this
-// only needs to be pinned to PNG if detections look unreliable. The resource-bubble
-// detector always uses PNG: its white threshold (243) is too tight for JPEG.
+// only needs to be pinned to PNG if detections look unreliable.
 const formatBtn = $('captureFormat');
 
 function paintCaptureFormat(fmt) {
@@ -270,7 +235,7 @@ formatBtn.addEventListener('click', async () => {
 
 // Autostart: the content scripts read these keys when the page loads, and until now
 // there was no way to change them without editing the extension's storage by hand.
-const AUTOSTART = { meatAuto: 'meatAutoStart', woodAuto: 'woodAutoStart', resAuto: 'resAutoStart' };
+const AUTOSTART = { meatAuto: 'meatAutoStart', woodAuto: 'woodAutoStart' };
 
 chrome.storage.local.get(Object.values(AUTOSTART), (saved) => {
   for (const [id, key] of Object.entries(AUTOSTART)) $(id).checked = !!saved[key];

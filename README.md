@@ -1,6 +1,6 @@
 # extension_re
 
-Chrome extension plus a Node test harness for resource collection in **Social Reborn**
+Chrome extension plus a Node test harness for **Social Reborn**
 (`empires.socialreborn.com`).
 
 > Personal-use tooling for a single game. Automating gameplay may violate that game's
@@ -12,8 +12,9 @@ Chrome extension plus a Node test harness for resource collection in **Social Re
 | --- | --- |
 | `meat` | Detects the white-box / red-centre meat icons on the canvas. Three out of four runs sweep the cursor over them with the button held (drag); the fourth clicks them one by one. |
 | `wood` | Detects trunks with green canopy above them and marks the tree nearest to the villager (the last tree it cut), so the walk is the shortest one. |
-| `res` | Detects white resource bubbles, classifies meat/wood/gold/stone, then clicks them one at a time: every click opens the 2x2 gather-time dialog for that building and the configured option is picked before the next bubble. |
 | HUD | In-page panel (Shadow DOM) with a calibration overlay. `Ctrl+Shift+Y` toggles it, which is the only control surface in fullscreen. |
+
+The resource collector lives on the `pruebas` branch only, where it is still under test.
 
 ## Install
 
@@ -21,8 +22,8 @@ Chrome extension plus a Node test harness for resource collection in **Social Re
 2. **Load unpacked** and select `social-reborn-toolkit/`.
 3. Open the game and reload the page so the content scripts pick up the new build.
 
-The popup controls start/stop, calibration, the meat collect mode, the gather time, the
-per-module autostart-on-reload and the capture format. Input is synthesized
+The popup controls start/stop, calibration, the meat collect mode, the session preset,
+the per-module autostart-on-reload and the capture format. Input is synthesized
 (`isTrusted: false`) by default; debugger mode uses CDP and raises Chrome's "started
 debugging this browser" infobar.
 
@@ -44,15 +45,13 @@ Node only, no dependencies. Run everything from the repository root:
 
 ```
 npm test                            # every test file (tests/all.cjs)
-node tests/run.cjs                  # golden-file detector regression (meat, wood, res)
+node tests/run.cjs                  # golden-file detector regression (meat, wood)
 node tests/meat_loop.cjs            # click burst, drag mode, stop mid-burst
 node tests/meat_policy.cjs          # 100% collection in the three modes
 node tests/meat_rounds.cjs          # 25 min + 5 min break + 30 min schedule
+node tests/meat_start.cjs           # Start arms the first collection, Stop cancels it
+node tests/meat_stale_start_timer.cjs  # a stale Start timer cannot resurrect a stopped run
 node tests/control.cjs              # one chain at a time: stop/start/resume
-node tests/res_loop.cjs             # resource collector end to end
-node tests/res_pair.cjs             # two buildings per gather-time dialog
-node tests/res_round.cjs            # 16 assignments per round, then a 6-7 min pause
-node tests/res_dialog.cjs           # the dialog is not fabricated from the UI panels
 node tests/wood_loop.cjs            # empty map and capture errors never stop the run
 node tests/wood_villager.cjs        # a villager that never cuts stops the module
 node tests/wood_nearest.cjs         # the trunk nearest to the villager is the one cut
@@ -110,7 +109,7 @@ Mixer once so its data file is in the list.
 ```
 social-reborn-toolkit/    the extension (manifest v3)
   content/hud.js          shared HUD, overlays, capture and input serialization
-  content/{meat,wood,resources}.js
+  content/{meat,wood}.js
   background.js           debugger attach, CDP input, screenshot capture
   popup.{html,js}
 tests/                    detector and loop harnesses

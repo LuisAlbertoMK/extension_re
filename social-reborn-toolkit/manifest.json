@@ -1,14 +1,14 @@
 {
   "manifest_version": 3,
   "name": "Social Reborn Toolkit",
-  "version": "2.13.1",
+  "version": "2.14.0",
   "description": "Meat, wood and resource-bubble collection for Social Reborn (WebGL canvas)",
   "minimum_chrome_version": "102",
   "permissions": ["storage", "activeTab", "debugger"],
   "host_permissions": ["https://empires.socialreborn.com/*"],
   "content_scripts": [{
     "matches": ["https://empires.socialreborn.com/*"],
-    "js": ["content/hud.js", "content/meat.js", "content/wood.js", "content/resources.js"],
+    "js": ["content/hud.js", "content/meat.js", "content/wood.js"],
     "run_at": "document_idle",
     "all_frames": true
   }],
