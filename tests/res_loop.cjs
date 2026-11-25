@@ -213,7 +213,7 @@ function assert(cond, msg) {
   T.CFG.cycMin = 60000; T.CFG.cycMax = 60000;
   dyn = () => goldFrame(dialogClicks - dlg0 >= 3 ? 5 : 3);
   T.start();
-  await wait(6000);
+  await wait(10000);
   T.stop();
   dyn = null;
   assert(dialogClicks - dlg0 === 5, `a bubble that renders late is still assigned (${dialogClicks - dlg0})`);

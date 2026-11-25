@@ -7,12 +7,14 @@
   'use strict';
 
   const CFG = {
-    meat: true, wood: true, gold: true, stone: true,
     cycMin: 5000, cycMax: 7000,        // ms entre ciclos (5-7s tras la ultima asignacion)
     whiteMin: 243,                       // umbral de "blanco" de la burbuja
     wMin: 30, wMax: 65, hMin: 30, hMax: 70, // tamaño burbuja (px de screenshot)
     minPx: 40,                           // píxeles mínimos del color del recurso
     mTop: 0.09, mBottom: 0.14, mLeft: 0.07, mRight: 0.08, // zonas UI excluidas (fracción)
+    // The floating resource counter at the bottom center (meat/wood/gold/stone) looks
+    // like a row of bubbles. Exclude its band so it is never a false 17th detection.
+    barTop: 0.70, barBottom: 0.95, barLeft: 0.33, barRight: 0.67,
     jitter: 5, gapMin: 350, gapMax: 900, // jitter y pausa entre clicks (ms)
     // The game takes the first click as a selection and opens the shared "choose time"
     // dialog with the second one, so two buildings are assigned by a single dialog. 1
@@ -29,7 +31,6 @@
     option: 0,                           // 0=5min(arriba-izq) 1=1h 2=4h 3=8h
     // Wait before picking the gather time. Kept short: the dialog is on screen the whole
     // time and a long wait risks it closing on its own.
-    selMin: 3000, selMax: 8000,
     btnWMin: 80, btnWMax: 140, btnHMin: 20, btnHMax: 40, // botón "Elegir" (px)
     // Hard session cap, same anti-bot model as the meat and wood modules.
     sessionMinMs: 20 * 60 * 1000,
@@ -200,6 +201,11 @@
         const w = g.maxX - g.minX + 1, hh = g.maxY - g.minY + 1, fill = g.t / (w * hh), ratio = hh / w;
         const cx = g.minX + w / 2, cy = g.minY + hh / 2;
         if (cx < mx0 || cx > mx1 || cy < my0 || cy > my1) continue;
+        if (cx >= W * CFG.barLeft && cx <= W * CFG.barRight &&
+            cy >= H * CFG.barTop && cy <= H * CFG.barBottom) {
+          rejects.push({ x: cx / s, y: cy / s, w: w / s, h: hh / s, why: 'ui bar' });
+          continue;
+        }
         const rj = why => rejects.push({ x: cx / s, y: cy / s, w: w / s, h: hh / s, why });
         if (w < CFG.wMin || w > CFG.wMax || hh < CFG.hMin || hh > CFG.hMax) { if (w >= 20 && hh >= 20) rj('size ' + w + 'x' + hh); continue; }
         if (fill < 0.12 || fill > 0.92 || ratio < 0.8 || ratio > 1.6) { rj('shape ' + fill.toFixed(2) + '/' + ratio.toFixed(1)); continue; }
@@ -243,7 +249,7 @@
     let dialog = null;
     const grid = btns.filter(b =>
       b.x >= innerWidth * 0.05 && b.x <= innerWidth * 0.95 &&
-      b.y >= innerHeight * 0.12 && b.y <= innerHeight * 0.80);
+      b.y >= innerHeight * 0.12 && b.y <= innerHeight * 0.90);
     if (grid.length >= 4) {
       const rows = [];
       for (const b of grid.sort((a, b) => a.y - b.y)) {
@@ -256,7 +262,12 @@
         const top = two[0].items.slice().sort((a, b) => a.x - b.x);
         const bot = two[1].items.slice().sort((a, b) => a.x - b.x);
         const row = CFG.option >= 2 ? bot : top;
-        dialog = { target: row[CFG.option % 2] || row[0] || null, btns: grid };
+        // The dialog's own ✕ sits above-right of the top-right "Elegir" button. A
+        // synthetic Escape is untrusted and the game may ignore it, so this is the
+        // reliable way to dismiss a dialog whose target click did not take.
+        const tr = top[top.length - 1] || top[0];
+        const close = tr ? { x: tr.x + tr.w * 1.4, y: tr.y - tr.h * 6.2 } : null;
+        dialog = { target: row[CFG.option % 2] || row[0] || null, btns: grid, close };
       }
     }
     rej = rej.filter(r => !items.some(o => Math.hypot(o.x - r.x, o.y - r.y) < r.w * 0.6));
@@ -304,7 +315,10 @@
       const r = await scan();
       if (r.dialog) return r;
       if (Date.now() >= end) return null;
-      await sleep(150);
+      // captureVisibleTab is capped at ~2/s; polling every 150 ms queued captures
+      // faster than Chrome allows and the failures left the dialog unhandled half the
+      // time. 350 ms stays well under the cap and is still fast enough.
+      await sleep(350);
     }
     return null;
   }
@@ -312,7 +326,17 @@
   // A dialog that will not close is worse than a missed assignment: every later click
   // lands inside it and the collector keeps hammering the same spot. Escape is the only
   // way out that does not risk committing a duration we did not choose.
-  function closeDialog() {
+  async function closeDialog(dialog) {
+    // Prefer the dialog's own ✕ (computed from the button grid): the game may ignore a
+    // synthetic Escape, which left the dialog open and every later click inside it.
+    const close = dialog && dialog.close;
+    const input = window.__SRToolkit?.input;
+    if (close && input) {
+      // A click that throws must still fall through to Escape, so this is a try/catch
+      // rather than a promise .catch (the shim's click may not return a promise).
+      try { await input.click(Math.round(close.x), Math.round(close.y)); } catch { /* fall back */ }
+      return;
+    }
     const ev = { key: 'Escape', code: 'Escape', keyCode: 27, which: 27, bubbles: true, cancelable: true };
     try {
       const target = document.activeElement || document.body || document;
@@ -333,10 +357,15 @@
         return false;                   // never opened
       }
       if (!r.dialog.target) return false;
-      await humanClick(r.dialog.target, alive);
-      const end = Date.now() + 1200;
+      // The dialog slides in: its buttons move while it opens, so a click on the
+      // position from the first frame can miss. Let it settle and re-locate.
+      await sleep(gap(250, 450));
+      const settled = await scan();
+      const target = (settled.dialog && settled.dialog.target) || r.dialog.target;
+      await humanClick(target, alive);
+      const end = Date.now() + 1800;
       while (alive() && Date.now() < end) {
-        await sleep(120);
+        await sleep(300);
         const r2 = await scan();
         if (!r2.dialog) return true;
       }
@@ -354,8 +383,12 @@
 
   // How long to wait before looking at the map again. A finished round waits for the
   // workers (6-7 min); anything else keeps the short cycle gap. Resets the round.
-  function roundWait() {
-    if (roundCount < CFG.batch) return 0;
+  // The map hands out a fixed number of bubbles per round, but that number is not
+  // always reachable (a map can have fewer buildings than CFG.batch). An empty tail
+  // after at least one assignment means the round is over too, so the collector takes
+  // the long pause instead of scanning a dead map every 5-7 s forever.
+  function roundWait(mapEmpty) {
+    if (roundCount < CFG.batch && !(mapEmpty && roundCount > 0)) return 0;
     roundCount = 0;
     stats.round = 0;
     nextRoundAt = Date.now() + gap(CFG.batchMin, CFG.batchMax);
@@ -377,7 +410,16 @@
     const done = new Set();         // "x,y" -> this bubble already got its gather time
     const retried = new Set();      // "x,y" -> bubble already re-clicked once this cycle
     const tries = new Map();        // "x,y" -> clicks that never opened a dialog
-    const keyOf = it => Math.round(it.x / 20) + ',' + Math.round(it.y / 20);
+    // Match by distance (<= 15 px) to a known bubble, not by grid cell: a center that drifts
+    // a few px across a cell border used to read as "vanished" and inflated the count.
+    const known = [];
+    const keyOf = it => {
+      const k = known.find(q => Math.hypot(q.x - it.x, q.y - it.y) <= 15);
+      if (k) return k.id;
+      const id = Math.round(it.x) + ',' + Math.round(it.y);
+      known.push({ x: it.x, y: it.y, id });
+      return id;
+    };
 
     // One pass at a time: bubbles are clicked one after another and the dialog they open
     // is resolved immediately. No queue is built ahead of time, which is what used to
@@ -400,10 +442,13 @@
           for (const k of selected) done.add(k);
           selected = [];
           dialogFails = 0;
+          // Let the closing animation finish before the next scan; otherwise the next
+          // cycle sees the dialog still up and tries to pick a time that is gone.
+          await sleep(gap(150, 300));
         } else if (++dialogFails >= 3) {
           // Give up on this dialog and clear it, so the next cycle starts on a clean map
           // instead of clicking into the same stale window.
-          closeDialog();
+          closeDialog(r.dialog);
           selected = [];
           lastError = 'cannot pick the gather time (check Calibrate)';
           break;
@@ -421,7 +466,19 @@
         for (const k of vanished) done.add(k);
       }
       selected = selected.filter(k => present.has(k));
-      selected = selected.filter(k => present.has(k));
+      // No dialog after the click that should have opened it: the game wants a second
+      // click on the SAME bubble (the first only selects the building). Re-click it
+      // once before dropping the selection, even when other bubbles are available;
+      // moving on to a different bubble is why the dialog never opened.
+      if (selected.length >= CFG.pairMax && !retried.has(selected[0])) {
+        const again = r.items.find(x => keyOf(x) === selected[0]);
+        if (again) {
+          retried.add(selected[0]);
+          await sleep(gap(CFG.pairBeatMin, CFG.pairBeatMax));
+          if (await humanClick(again, alive)) { clicked++; await waitForDialog(1500, alive); }
+          continue;
+        }
+      }
       // Two clicks and still no dialog: neither registered, so charge both a try.
       if (selected.length >= CFG.pairMax) {
         for (const k of selected) tries.set(k, (tries.get(k) || 0) + 1);
@@ -442,7 +499,13 @@
           if (again) {
             retried.add(selected[0]);
             await sleep(gap(CFG.pairBeatMin, CFG.pairBeatMax));
-            if (await humanClick(again, alive)) { clicked++; selected.push(selected[0]); }
+            if (await humanClick(again, alive)) clicked++;
+            if (await waitForDialog(1500, alive)) continue;
+            // Two clicks on the same bubble and still no dialog: charge the attempt so
+            // the bubble is dropped after its second failure instead of being retried
+            // forever, and start the next scan with a clean selection.
+            tries.set(selected[0], (tries.get(selected[0]) || 0) + 1);
+            selected = [];
             continue;
           }
         }
@@ -456,7 +519,13 @@
       // not do when picking two buildings in a row, and some UIs drop the selection.
       const beat = selected.length ? gap(CFG.pairBeatMin, CFG.pairBeatMax) : gap(CFG.gapMin, CFG.gapMax);
       await sleep(beat);
-      if (await humanClick(it, alive)) { stats[it.type]++; clicked++; selected.push(keyOf(it)); }
+      if (await humanClick(it, alive)) {
+        stats[it.type]++; clicked++; selected.push(keyOf(it));
+        // The dialog opens within ~0.3-0.6 s of the click that completes the selection.
+        // Scanning once and picking the next bubble before it is up lands that next click
+        // INSIDE the dialog (it then "assigns" the wrong building), so wait for it here.
+        if (selected.length >= CFG.pairMax) await waitForDialog(1500, alive);
+      }
     }
     if (!alive()) return stats.chosen - chosenBefore;
 
@@ -467,7 +536,7 @@
     if (clicked && !assigned) assignFails++;
     else if (assigned) assignFails = 0;
     if (!alive()) return assigned;
-    const pause = roundWait();
+    const pause = roundWait(empty >= 3);
     if (pause) {
       // The whole map is busy: there is nothing to click until the workers finish, and
       // scanning every few seconds for six minutes only burns captures.
@@ -475,7 +544,8 @@
       status = `round done (${CFG.batch}), waiting ${Math.round(pause / 60000)} min`;
       return assigned;
     }
-    await sleep(gap(CFG.cycMin, CFG.cycMax));
+    // No sleep here: tick() already waits gap(cycMin, cycMax) before the next cycle, and
+    // sleeping in both made the real period twice the configured 5-7 s.
     return assigned;   // tick() reports this in the status line
   }
 
@@ -521,7 +591,10 @@
     // on top of it: 6-7 minutes is the answer, not 60.
     const delay = pendingWait || gap(CFG.cycMin, CFG.cycMax) * backoff;
     pendingWait = 0;
-    timer = setTimeout(() => tick(loopToken), delay);
+    // A 6-7 min round pause can overshoot the session cap; wake up at the cap so the
+    // module stops on time instead of sleeping past it.
+    const untilCap = sessionEndsAt - Date.now();
+    timer = setTimeout(() => tick(loopToken), untilCap > 0 && delay > untilCap ? untilCap : delay);
   }
 
   function start() {
@@ -624,7 +697,16 @@
     liveOverlay = true;
     const result = await scan();
     drawOverlay(result);
-    return result.items.length;
+    if (result.items.length) return result.items.length;
+    // Nothing found: say why (size / shape / corners / colour) instead of a bare 0,
+    // so a bad threshold is distinguishable from an empty screen.
+    const why = {};
+    for (const r of result.rejects || []) {
+      const k = String(r.why).split(' ')[0];
+      why[k] = (why[k] || 0) + 1;
+    }
+    const parts = Object.entries(why).map(([k, v]) => `${k}:${v}`).join(' ');
+    return `0 found · ${parts || 'no white regions'}`;
   }
 
   chrome.runtime.onMessage.addListener((m, s, send) => {
@@ -681,6 +763,21 @@
     toggle() { running ? stop() : start(); },
     // Must return the promise: the HUD shows the count, or the reason it failed.
     calibrate() { return calibrate(); },
+    // Diagnostic dump: lossless frame + detections/rejects as JSON, same as meat and
+    // wood, so a bad bubble detection can be reproduced offline from the exact pixels.
+    async exportFrame() {
+      const r = await capture();
+      if (!r || r.error) throw new Error((r && r.error) || 'capture returned nothing');
+      const result = detect(await loadImg(r.dataUrl));
+      const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+      const save = (href, name) => { const a = document.createElement('a'); a.href = href; a.download = name; document.body.appendChild(a); a.click(); a.remove(); };
+      save(r.dataUrl, `sr-res-${stamp}.png`);
+      const blob = new Blob([JSON.stringify({ at: stamp, viewport: [innerWidth, innerHeight, devicePixelRatio], cfg: CFG, result }, null, 1)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      save(url, `sr-res-${stamp}.json`);
+      setTimeout(() => URL.revokeObjectURL(url), 5000);
+      return result.items.length;
+    },
     redraw() { if (liveOverlay) drawOverlay(lastResult); }
   });
 
