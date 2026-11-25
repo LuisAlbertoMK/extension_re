@@ -25,6 +25,9 @@ function woodFrame(w, h, seed) {
     const x = 140 + Math.floor(r() * (w - 320)), y = 160 + Math.floor(r() * (h - 340));
     rect(d, w, x, y, bs, bs, 175, 105, 70);
     rect(d, w, x - 6, y - 12, bs + 12, 12, 60, 150, 60);
+    // Real canopies carry bright lime highlights (CFG.lightG/lightMin) that grass,
+    // fields and roofs lack; without them the trunk is rejected.
+    rect(d, w, x - 6, y - 12, bs + 12, 6, 120, 205, 80);
   }
   return { w, h, data: d };
 }

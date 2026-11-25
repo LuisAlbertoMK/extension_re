@@ -7,24 +7,31 @@
   const CFG = {
     intMin: 2600, intMax: 3600,   // ms between marks
     cutTime: 7000,                // ms to cut one tree
-    cutGrace: 3000,               // extra ms before a clicked tree must be gone
-    noCutLimit: 3,                // clicks in a row whose tree survived = villager is dead/busy
+    noCutWindowMs: 45000,         // no clicked tree has fallen for this long = villager is dead/busy
     maxQueue: 5,                  // queue cap (do not mark when full)
     rMin: 150, rGap: 40, gbGap: 15, // trunk color: R>=rMin, R-G>=rGap, G-B>=gbGap
     minTrunk: 3, maxTrunk: 60,    // trunk size (screenshot px)
     foreignMax: 0.15, canopyMin: 0.5, // isolation: max % non-green around / min % green canopy above
+    lightG: 190, lightMin: 0.12,  // tree canopy has bright lime highlights (G>=lightG) that grass, fields and roofs lack
     clickOffsetY: -4,             // move the click up toward the canopy
     jitter: 2,
     nearestTiePx: 15,             // trees within this much of the nearest one are an even walk
     mTop: 90, mBottom: 150, mLeft: 90, mRight: 100, // excluded UI zones (CSS px)
     // Hard session cap: the cutter stops itself after a random 20-30 minutes.
     sessionMinMs: 20 * 60 * 1000,
-    sessionMaxMs: 30 * 60 * 1000
+    sessionMaxMs: 30 * 60 * 1000,
+    // Auto-pan: when the view has no trees left and the queue is empty, drag the map one
+    // step along a serpentine route (rows left<->right, then down/up) and rescan.
+    autoPan: true,
+    panFrac: 0.55,                // step = this fraction of the usable view
+    panMinMs: 600, panMaxMs: 1000,
+    panSettleMs: 700,             // wait after a drag before rescanning
+    edgeDiff: 4                   // mean luminance change (0-255) below which a pan did not move the map
   };
 
   let running = false, timer = null, last = null;
-  let pendingCut = [];     // clicks still waiting to see their tree disappear: { x, y, at }
-  let noCutStreak = 0;     // consecutive clicks whose tree was still standing afterwards
+  let pendingCut = [];     // clicked trees not yet seen gone: { x, y, at (click time) }
+  let lastFall = 0;        // last time a clicked tree was seen gone from the map
   // One chain at a time: every start/stop bumps the token and a callback carrying an
   // older token is ignored. Without it, a cycle that was still in flight when the user
   // pressed Stop and then Start would reschedule itself next to the new chain.
@@ -35,8 +42,15 @@
   let sessionEndsAt = 0;   // wall-clock deadline for the current run
   let status = 'idle';
   let lastError = '';      // last capture/scan failure, shown in the popup
-  const stats = { clicked: 0, cycles: 0, found: 0, queue: 0 };
+  const stats = { clicked: 0, cycles: 0, found: 0, queue: 0, pans: 0 };
   let finish = [], recent = [];
+  let emptyStreak = 0;     // consecutive scans with nothing to cut: slows polling while the map is empty
+  let zeroStreak = 0;      // consecutive empty JPEG scans: gates the lossless confirmation
+  let lastSig = null;      // coarse luminance signature of the last frame (pan edge detection)
+  let pan = null;          // { sig, axis } while a pan is being verified
+  let panDirX = 1, panDirY = 1, nextAxis = 'x';
+  const falls = [];        // recent intervals between tree falls, to learn the real cut time
+  let lastFallAt = 0;
 
   const rand = (a, b) => a + Math.random() * (b - a);
   // Right-skewed wait for the schedule; the HUD owns it so the three modules share one
@@ -89,11 +103,17 @@
     ctx.drawImage(img, 0, 0);
     const d = ctx.getImageData(0, 0, W, H).data;
     const x0 = CFG.mLeft * s, x1 = W - CFG.mRight * s, y0 = CFG.mTop * s, y1 = H - CFG.mBottom * s;
+    const sig = new Uint8Array(48 * 27);
+    for (let j = 0; j < 27; j++) for (let k = 0; k < 48; k++) {
+      const p = (Math.floor((j + 0.5) * H / 27) * W + Math.floor((k + 0.5) * W / 48)) * 4;
+      sig[j * 48 + k] = (d[p] * 77 + d[p + 1] * 150 + d[p + 2] * 29) >> 8;
+    }
+    lastSig = sig;
     const f = flags;
     for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
       const i = y * W + x, p = i * 4, r = d[p], g = d[p + 1], b = d[p + 2];
       let v = 0;
-      if (g > r + 8 && g > b + 20) v |= 2;
+      if (g > r + 8 && g > b + 20) { v |= 2; if (g >= CFG.lightG && g > r + 35) v |= 8; }
       if (x >= x0 && x < x1 && y >= y0 && y < y1 &&
           r >= CFG.rMin && r - g >= CFG.rGap && g - b >= CFG.gbGap) v |= 1;
       f[i] = v;
@@ -116,19 +136,19 @@
       const cx = Math.round(sx / t), cy = Math.round(sy / t);
       const id = t * 100000 + st;
       for (let k = 0; k < t; k++) o[q[k]] = id;
-      let foreign = 0, n = 0, cg = 0, cn = 0;
+      let foreign = 0, n = 0, cg = 0, cn = 0, cl = 0;
       for (let y = Math.max(0, cy - 14); y <= Math.min(H - 1, cy + 2); y++)
         for (let x = Math.max(0, cx - 9); x <= Math.min(W - 1, cx + 9); x++) {
           const i = y * W + x;
           if (o[i] === id) continue;
           n++; if (!(f[i] & 2)) foreign++;
-          if (y <= cy - 3 && Math.abs(x - cx) <= 6) { cn++; if (f[i] & 2) cg++; }
+          if (y <= cy - 3 && Math.abs(x - cx) <= 6) { cn++; if (f[i] & 2) cg++; if (f[i] & 8) cl++; }
         }
       // Clear the markers instead of memsetting the whole array: q[0..t) still holds
       // this trunk's pixels, so no stale id can leak into the next scan.
       for (let k = 0; k < t; k++) o[q[k]] = 0;
       if (!n || foreign / n > CFG.foreignMax) continue;
-      if (!cn || cg / cn < CFG.canopyMin) continue;
+      if (!cn || cg / cn < CFG.canopyMin || cl / cn < CFG.lightMin) continue;
       out.push({ x: cx / s, y: cy / s + CFG.clickOffsetY, size: t });
     }
     return out;
@@ -152,20 +172,49 @@
 
   async function scan() {
     const trees = await scanOnce('jpeg');
-    if (trees.length) return trees;
+    if (trees.length) { zeroStreak = 0; return trees; }
+    zeroStreak++;
     // The trunk test is chroma-based and JPEG uses 4:2:0 subsampling, so an empty
-    // result gets one lossless confirmation before it counts as "no trees". Skipped
-    // when the user pinned PNG, where the fast path was already lossless.
+    // result gets one lossless confirmation before it counts as "no trees". A genuinely
+    // empty map must not pay a PNG capture on every cycle (and with auto-pan it would
+    // double the capture rate against Chrome's 2/s cap), so confirm on the first empty
+    // frame and then every 4th, the same policy as the meat detector.
     if (window.__SRToolkit?.captureFormat === 'png') return trees;
+    if (zeroStreak !== 1 && zeroStreak % 4 !== 0) return trees;
     return scanOnce('png');
   }
 
-  // Streak advance for one batch of overdue clicks, independent of their order. Returns
-  // the new streak: any tree that did fall proves the villager is working.
-  function cutStreak(streak, due, trees) {
-    if (!due.length) return streak;
-    const missed = due.filter(p => trees.some(x => Math.hypot(x.x - p.x, x.y - p.y) < 10)).length;
-    return missed === due.length ? streak + missed : 0;
+  // Which clicked trees are gone from the map? The queue is FIFO and each walk adds up, so
+  // a per-tree deadline drifts: the 4th tree in the queue is legitimately still standing
+  // when its estimated time arrives (a healthy villager tripped a "not cutting" stop after
+  // ~30 s that way). What a working villager does guarantee is that SOME tree falls every
+  // cutTime or so, so the check is the time since the last fall, not "on schedule".
+  // A tree the detector no longer sees counts as fallen: that errs toward not stopping.
+  function settleCuts(trees, now) {
+    const keep = [];
+    let fell = false;
+    for (const p of pendingCut) {
+      const standing = trees.some(x => Math.hypot(x.x - p.x, x.y - p.y) < 10);
+      if (!standing) { lastFall = now; fell = true; }
+      else if (now - p.at < 5 * 60 * 1000) keep.push(p);
+    }
+    // Learn the real cut time: median gap between consecutive falls while a backlog exists.
+    if (fell) {
+      if (lastFallAt && keep.length && now - lastFallAt < 20000) {
+        falls.push(now - lastFallAt);
+        if (falls.length > 5) falls.shift();
+        if (falls.length >= 3) {
+          const m = [...falls].sort((a, b) => a - b)[falls.length >> 1];
+          CFG.cutTime = Math.min(20000, Math.max(3000, m));
+        }
+      }
+      lastFallAt = now;
+    }
+    // Aged out after 5 min, not sooner: a backlog can legitimately keep a tree standing for
+    // a minute or more, and dropping it early (or keeping only the newest ones) would hide
+    // the fall that proves the villager works. A click that never took (landed on grass)
+    // is simply forgotten after that.
+    pendingCut = keep;
   }
 
   // The villager stands where it last cut, so the trunk nearest to that point is the
@@ -202,6 +251,53 @@
     return input.click(tx, ty);
   }
 
+  function sigDiff(a, b) {
+    if (!a || !b) return 255;
+    let t = 0;
+    for (let i = 0; i < a.length; i++) t += Math.abs(a[i] - b[i]);
+    return t / a.length;
+  }
+
+  // Drag the map one step. Dragging left moves the view right. Returns false if the
+  // gesture could not be sent. Everything tied to screen coordinates is invalidated.
+  async function panStep(axis) {
+    const input = window.__SRToolkit?.input;
+    if (!input?.drag) return false;
+    const ux = innerWidth - CFG.mLeft - CFG.mRight, uy = innerHeight - CFG.mTop - CFG.mBottom;
+    const cx = CFG.mLeft + ux / 2 + rand(-20, 20), cy = CFG.mTop + uy / 2 + rand(-20, 20);
+    const len = (axis === 'x' ? ux : uy) * CFG.panFrac * rand(0.9, 1.1);
+    const dir = axis === 'x' ? panDirX : panDirY;
+    // View moves by +dir, so the cursor travels by -dir.
+    const a = axis === 'x' ? { x: cx + dir * len / 2, y: cy } : { x: cx, y: cy + dir * len / 2 };
+    const b = axis === 'x' ? { x: cx - dir * len / 2, y: cy } : { x: cx, y: cy - dir * len / 2 };
+    const N = 14, pts = [];
+    for (let i = 0; i <= N; i++) {
+      const u = i / N, e = u * u * (3 - 2 * u); // ease in/out
+      pts.push({
+        x: Math.round(a.x + (b.x - a.x) * e + (i && i < N ? rand(-2, 2) : 0)),
+        y: Math.round(a.y + (b.y - a.y) * e + (i && i < N ? rand(-2, 2) : 0)),
+        w: 1
+      });
+    }
+    pan = { sig: lastSig, axis };
+    const ok = await input.drag(pts, rand(CFG.panMinMs, CFG.panMaxMs));
+    pendingCut = []; recent = []; last = null; lastFall = 0; lastFallAt = 0;
+    await sleep(CFG.panSettleMs);
+    if (!ok) pan = null;
+    return ok;
+  }
+
+  // After a pan, a near-identical frame means the map did not move = edge reached.
+  function resolvePan() {
+    if (!pan) return;
+    const moved = sigDiff(pan.sig, lastSig) > CFG.edgeDiff;
+    const axis = pan.axis; pan = null;
+    if (axis === 'y') nextAxis = 'x';
+    if (moved) return;
+    if (axis === 'x') { panDirX = -panDirX; nextAxis = 'y'; }
+    else { panDirY = -panDirY; }
+  }
+
   async function tick(my) {
     if (!running || my !== loopToken) return;
     // A cycle is already in flight: it owns the chain and reschedules when it ends.
@@ -219,38 +315,40 @@
         const trees = await scan();
         errStreak = 0;
         stats.found = trees.length; stats.cycles++;
+        emptyStreak = trees.length ? 0 : emptyStreak + 1;
+        resolvePan();
         if (liveOverlay && window.__SRToolkit?.hasOverlay('wood')) drawOverlay(trees);
         else liveOverlay = false;
 
-        // Did the trees we clicked earlier actually fall? A dead or busy villager keeps
-        // the tree standing, and without this check the module would keep clicking for
-        // the whole session cap without collecting anything.
+        // Did any clicked tree fall? A dead or busy villager keeps every tree standing, and
+        // without this check the module would keep clicking for the whole session cap.
         const now = Date.now();
-        const due = pendingCut.filter(p => now >= p.at);
-        if (due.length) pendingCut = pendingCut.filter(p => now < p.at);
-        // Judge the whole batch at once. Mutating one counter per item made the verdict
-        // depend on the batch order: [cut, still, still] ended at 2 while [still, still,
-        // cut] ended at 0 for the same facts, and the first shape is the common one
-        // because the queue is FIFO. One tree that did fall proves the villager is
-        // working; the rest are simply still being walked to.
-        noCutStreak = cutStreak(noCutStreak, due, trees);
-        if (noCutStreak >= CFG.noCutLimit) {
+        settleCuts(trees, now);
+        const since = Math.max(lastFall, pendingCut.length ? pendingCut[0].at : 0);
+        if (pendingCut.length && since && now - since > CFG.noCutWindowMs) {
           stop('villager is not cutting (dead or busy)');
           return;
         }
-        if (noCutStreak) status = `tree not cut (${noCutStreak}/${CFG.noCutLimit})`;
+        if (pendingCut.length && since && now - since > CFG.noCutWindowMs / 2) {
+          status = `no tree cut for ${Math.round((now - since) / 1000)}s`;
+        }
 
         const t = pick(trees);
         if (!t) {
           // Never stop the session because the map looks empty: trees respawn, and a
           // self-stop leaves the module off until the user notices. The 20-30 min
           // session cap is the only automatic stop.
-          if (!noCutStreak) status = 'no trees';
+          status = 'no trees';
+          // Everything visible is cut and the villager is idle: move to the next screen.
+          if (CFG.autoPan && queueSize() === 0 && pendingCut.length === 0) {
+            status = 'panning';
+            if (await panStep(nextAxis)) stats.pans++;
+          }
         } else {
           await sleep(gap(80, 300));
           if (await clickAt(t.x, t.y)) {
             stats.clicked++; regClick(); last = t; recent.push({ x: t.x, y: t.y, t: Date.now() });
-            pendingCut.push({ x: t.x, y: t.y, at: Date.now() + CFG.cutTime + CFG.cutGrace });
+            pendingCut.push({ x: t.x, y: t.y, at: Date.now() });
             status = 'cutting';
           }
         }
@@ -265,7 +363,7 @@
     stats.queue = queueSize();
     // Never stops on its own: a capture hiccup must not end the session - the user owns
     // Stop. Back off instead, so a failing capture is retried slower, not tighter.
-    if (running) timer = setTimeout(() => tick(loopToken), gap(CFG.intMin, CFG.intMax) * (1 + Math.min(errStreak, 10)));
+    if (running) timer = setTimeout(() => tick(loopToken), gap(CFG.intMin, CFG.intMax) * (1 + Math.min(errStreak, 10)) * (1 + Math.min(emptyStreak >> 2, 2)));
   }
 
   function start() {
@@ -273,8 +371,9 @@
     running = true;
     lastError = '';
     errStreak = 0;
-    pendingCut = [];
-    noCutStreak = 0;
+    pendingCut = []; recent = []; finish = []; falls.length = 0;
+    last = null; pan = null; lastFall = 0; lastFallAt = 0; nextAxis = 'x';
+    emptyStreak = 0; panDirX = 1; panDirY = 1;
     status = 'starting';
     const my = ++loopToken;
     const cap = CFG.sessionMinMs + Math.random() * (CFG.sessionMaxMs - CFG.sessionMinMs);
@@ -318,7 +417,8 @@
 
   // Calibration mode: detect once and keep the overlay updated on every cycle.
   async function calibrate() {
-    const trees = await scan();
+    // Diagnostics are not the hot path: always lossless, even when the cycles use JPEG.
+    const trees = await scanOnce('png');
     liveOverlay = true;
     drawOverlay(trees);
     return trees.length;
@@ -358,16 +458,33 @@
     label: 'Wood',
     getStatus() {
       const leftMin = running ? ` · ${Math.max(0, Math.ceil((sessionEndsAt - Date.now()) / 60000))}m` : '';
-      return { running, text: `${stats.clicked} marks${leftMin}` };
+      return { running, text: `${stats.clicked} marks · ${stats.pans} pans${leftMin}` };
     },
     toggle() { running ? stop() : start(); },
     // Must return the promise: the HUD shows the count, or the reason it failed.
     calibrate() { return calibrate(); },
+    // Diagnostic dump: the raw lossless frame + detections/config as JSON, so a bad
+    // detection can be reproduced offline from the exact pixels the detector saw.
+    async exportFrame() {
+      const r = await capture('png');
+      if (!r || r.error) throw new Error((r && r.error) || 'capture returned nothing');
+      const trees = detect(await loadImg(r.dataUrl));
+      const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+      const save = (href, name) => { const a = document.createElement('a'); a.href = href; a.download = name; document.body.appendChild(a); a.click(); a.remove(); };
+      save(r.dataUrl, `sr-wood-${stamp}.png`);
+      const blob = new Blob([JSON.stringify({ at: stamp, viewport: [innerWidth, innerHeight, devicePixelRatio], cfg: CFG, trees }, null, 1)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      save(url, `sr-wood-${stamp}.json`);
+      setTimeout(() => URL.revokeObjectURL(url), 5000);
+      return trees.length;
+    },
     redraw() { if (liveOverlay) drawOverlay(lastTrees); }
   });
 
   // Autostart only in the frame that owns the game canvas: the manifest injects into
   // every frame, and each one would otherwise run its own capture/click loop.
+  chrome.storage.local.get(['woodAutoPan'], ({ woodAutoPan }) => { if (woodAutoPan === false) CFG.autoPan = false; });
+  chrome.storage.onChanged.addListener((c) => { if (c.woodAutoPan) CFG.autoPan = c.woodAutoPan.newValue !== false; });
   chrome.storage.local.get(['woodAutoStart'], ({ woodAutoStart }) => {
     if (!woodAutoStart) return;
     let tries = 0;

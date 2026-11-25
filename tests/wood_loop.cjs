@@ -8,7 +8,7 @@ let failing = false;
 let scans = 0;
 
 const T = shim.load('wood.js',
-  '{ start, stop, CFG, stats, dbg: () => ({ running, status, lastError }) }',
+  '{ start, stop, CFG, stats, resetEmpty: () => { emptyStreak = 0; }, dbg: () => ({ running, status, lastError }) }',
   (sb) => {
     sb.__SRToolkit = {
       show() {}, register() {}, hasOverlay: () => false, captureFormat: 'jpeg',
@@ -43,6 +43,9 @@ function assert(cond, msg) {
   assert(T.stats.cycles >= 4, `it keeps scanning (${T.stats.cycles} cycles)`);
 
   failing = true;
+  // The first phase ran on an empty map, which uses a different backoff (emptyStreak)
+  // from the capture-error one this phase is about: isolate it.
+  T.resetEmpty();
   await wait(120);
   d = T.dbg();
   assert(/capture failed: boom/.test(d.lastError), `a capture error is reported (${d.lastError})`);
