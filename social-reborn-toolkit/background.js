@@ -22,6 +22,15 @@ function ensureAttached(tabId, cb) {
   });
 }
 
+// One CDP mouse command. Chrome defines runtime.lastError only inside the callback, so
+// it is read there once and handed back as a plain error string (or null).
+function sendMouse(tabId, params, done) {
+  chrome.debugger.sendCommand({ tabId }, 'Input.dispatchMouseEvent', params, () => {
+    const e = chrome.runtime.lastError;
+    done(e ? e.message : null);
+  });
+}
+
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   const senderTabId = sender.tab?.id;
 
@@ -41,11 +50,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     // Pin the game's own window: `null` means "whichever window is current", so with
     // another window focused the capture returned that window's tab instead of the game.
     chrome.tabs.captureVisibleTab(sender.tab?.windowId ?? null, options, (dataUrl) => {
-      if (chrome.runtime.lastError) {
-        sendResponse({ error: chrome.runtime.lastError.message });
-      } else {
-        sendResponse({ dataUrl });
-      }
+      // Chrome defines runtime.lastError only inside the callback that produced it, so
+      // read it once and keep a plain string.
+      const e = chrome.runtime.lastError;
+      if (e) sendResponse({ error: e.message });
+      else sendResponse({ dataUrl });
     });
     return true;
   }
@@ -80,44 +89,19 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       }
 
       if (msg.type === 'DEBUGGER_MOVE') {
-        chrome.debugger.sendCommand(
-          { tabId },
-          'Input.dispatchMouseEvent',
-          { type: 'mouseMoved', x, y, button: 'none', buttons: 0 },
-          () => {
-            if (chrome.runtime.lastError) {
-              sendResponse({ error: chrome.runtime.lastError.message });
-              return;
-            }
-            sendResponse({ ok: true });
-          }
-        );
+        sendMouse(tabId, { type: 'mouseMoved', x, y, button: 'none', buttons: 0 },
+          (e) => sendResponse(e ? { error: e } : { ok: true }));
         return;
       }
 
-      chrome.debugger.sendCommand(
-        { tabId },
-        'Input.dispatchMouseEvent',
-        { type: 'mousePressed', x, y, button: 'left', buttons: 1, clickCount: 1 },
-        () => {
-          if (chrome.runtime.lastError) {
-            sendResponse({ error: chrome.runtime.lastError.message });
-            return;
-          }
-          chrome.debugger.sendCommand(
-            { tabId },
-            'Input.dispatchMouseEvent',
-            { type: 'mouseReleased', x, y, button: 'left', buttons: 0, clickCount: 1 },
-            () => {
-              if (chrome.runtime.lastError) {
-                sendResponse({ error: chrome.runtime.lastError.message });
-                return;
-              }
-              sendResponse({ ok: true });
-            }
-          );
+      sendMouse(tabId, { type: 'mousePressed', x, y, button: 'left', buttons: 1, clickCount: 1 }, (e) => {
+        if (e) {
+          sendResponse({ error: e });
+          return;
         }
-      );
+        sendMouse(tabId, { type: 'mouseReleased', x, y, button: 'left', buttons: 0, clickCount: 1 },
+          (e2) => sendResponse(e2 ? { error: e2 } : { ok: true }));
+      });
     });
     return true;
   }
@@ -135,28 +119,47 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         sendResponse({ error: err });
         return;
       }
+      // Resolve with the command's error instead of swallowing it: if the debugger is
+      // detached mid-gesture (DevTools opened, infobar cancelled, tab closed) a failed
+      // `mouseReleased` would leave the game holding the left button down for good.
       const dispatch = (type, x, y, buttons, button) => new Promise((res) =>
         chrome.debugger.sendCommand(
           { tabId },
           'Input.dispatchMouseEvent',
           { type, x, y, button, buttons, clickCount: 1 },
-          () => res()
+          () => {
+            // Read lastError exactly once: it is scoped to this callback.
+            const e = chrome.runtime.lastError;
+            res(e ? e.message : null);
+          }
         ));
       let totalW = 0;
       for (const p of path) totalW += p.w || 1;
       const t0 = Date.now();
       let acc = 0;
+      let failure = null;
+      const step = async (type, x, y, buttons, button) => {
+        const e = await dispatch(type, x, y, buttons, button);
+        if (e && !failure) failure = e;
+        return !e;
+      };
       try {
-        await dispatch('mousePressed', from.x, from.y, 1, 'left');
-        for (const p of path) {
-          await dispatch('mouseMoved', p.x, p.y, 1, 'none');
-          acc += p.w || 1;
-          const wait = duration * (acc / Math.max(1, totalW)) - (Date.now() - t0);
-          if (wait > 1) await new Promise(r => setTimeout(r, wait));
+        const pressed = await step('mousePressed', from.x, from.y, 1, 'left');
+        if (pressed) {
+          for (const p of path) {
+            if (!(await step('mouseMoved', p.x, p.y, 1, 'none'))) break;
+            acc += p.w || 1;
+            const wait = duration * (acc / Math.max(1, totalW)) - (Date.now() - t0);
+            if (wait > 1) await new Promise(r => setTimeout(r, wait));
+          }
         }
-        await dispatch('mouseMoved', to.x, to.y, 1, 'none');
-        await dispatch('mouseReleased', to.x, to.y, 0, 'left');
-        sendResponse({ ok: true });
+        if (pressed) {
+          if (!failure) await step('mouseMoved', to.x, to.y, 1, 'none');
+          // Always try to release, even after a failed move: a held button is worse
+          // than a short gesture.
+          await step('mouseReleased', to.x, to.y, 0, 'left');
+        }
+        sendResponse(failure ? { error: failure } : { ok: true });
       } catch (e) {
         sendResponse({ error: String(e) });
       }
@@ -193,9 +196,6 @@ chrome.tabs.onRemoved.addListener((tabId) => {
     chrome.debugger.detach({ tabId }, () => { void chrome.runtime.lastError; });
     debuggeeTabId = null;
   }
-});
-
-chrome.runtime.onInstalled.addListener(() => {
 });
 
 // Keyboard shortcut: toggles the in-page HUD. This is the only way to reach the
