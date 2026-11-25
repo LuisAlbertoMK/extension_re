@@ -98,7 +98,8 @@
     row.innerHTML =
       '<span class="dot"></span><span class="name"></span><span class="stat"></span>' +
       '<button class="toggle" data-act="toggle" title="Start / stop">▶</button>' +
-      '<button data-act="cal" title="Calibrate">🎯</button>';
+      '<button data-act="cal" title="Calibrate">🎯</button>' +
+      (m.exportFrame ? '<button data-act="exp" title="Export frame + detections (debug)">💾</button>' : '');
     row.querySelector('.name').textContent = m.label;
     row.querySelector('[data-act="toggle"]').addEventListener('click', () => {
       // The HUD is the only control surface in fullscreen, where the popup cannot be
@@ -114,8 +115,15 @@
       done('calibrating...');
       Promise.resolve()
         .then(() => m.calibrate())
-        .then(n => done(typeof n === 'number' ? `calibrated: ${n} icon(s)` : 'calibrated'))
+        .then(n => done(typeof n === 'number' ? `calibrated: ${n} icon(s)` : (typeof n === 'string' ? n : 'calibrated')))
         .catch(err => done((err && err.message) || String(err)));
+    });
+    const exp = row.querySelector('[data-act="exp"]');
+    if (exp) exp.addEventListener('click', () => {
+      flashRow(row, 'exporting...');
+      Promise.resolve().then(() => m.exportFrame())
+        .then(n => { flashRow(row, `exported (${n})`); renderRow(m); })
+        .catch(err => { flashRow(row, (err && err.message) || String(err)); renderRow(m); });
     });
     listEl.appendChild(row);
     rows.set(m.id, row);
@@ -170,12 +178,21 @@
 
   window.addEventListener('resize', () => { invalidateHit(); resyncOverlays(); });
 
+  // captureClean serializes captures, but a capture that times out releases the lock
+  // while it is still in flight, so a stale one can overlap the next one. Its finally
+  // must not un-hide the chrome in the middle of the newer screenshot, so the hide is
+  // ref-counted and only the last capture restores it.
+  let chromeHidden = 0;
+
   function hideChrome() {
+    chromeHidden++;
     if (hostEl) hostEl.style.visibility = 'hidden';
     overlays.forEach(c => { c.style.visibility = 'hidden'; });
   }
 
   function showChrome() {
+    if (chromeHidden === 0) return;
+    if (--chromeHidden > 0) return;
     if (hostEl) hostEl.style.visibility = '';
     overlays.forEach(c => { c.style.visibility = ''; });
   }
@@ -283,8 +300,10 @@
     // off by the infobar height, so attach first and wait for the resize to go quiet.
     await ensureDebuggerSettled();
 
-    hideChrome();
     try {
+      // Inside the try so a throw while hiding still runs the matching showChrome
+      // and cannot leave the ref-count incremented forever.
+      hideChrome();
       await nextPaint();
       await new Promise(r => setTimeout(r, 40));
       let res = await chrome.runtime.sendMessage({ type: 'CAPTURE_SCREENSHOT', format, quality });
@@ -317,6 +336,8 @@
     c.height = innerHeight;
     overlaySize = { w: innerWidth, h: innerHeight };
     if (c.parentElement !== parent) parent.appendChild(c);
+    // A capture in flight must not paint a newly mounted overlay into its frame.
+    if (chromeHidden > 0) c.style.visibility = 'hidden';
     return c;
   }
 

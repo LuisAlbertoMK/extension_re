@@ -45,7 +45,7 @@
       </select>
     </div>
     <div class="meta">
-      <label><input type="checkbox" id="meatCustom"> Personalizar tiempos</label>
+      <label><input type="checkbox" id="meatCustom"> Custom timings</label>
     </div>
     <div class="meta">
       <label><input type="checkbox" id="meatAuto"> Autostart on reload</label>
@@ -72,6 +72,33 @@
         <input class="opt" id="meat_clickDelayMax" type="number" style="width:100%">
       </div>
     </div>
+    <div class="meta">
+      <span>Session preset</span>
+      <select class="opt" id="meatSession">
+        <option value="">Custom (fields below)</option>
+        <option value="def">20-30 min, 1 round (default)</option>
+        <option value="c45">45 min continuous</option>
+        <option value="r2">25 min + 5 min break + 30 min</option>
+      </select>
+    </div>
+    <div class="meta">
+      <span>Round length (min)</span>
+      <div class="row" style="margin:0;gap:4px">
+        <input class="opt" id="meat_sessMin" type="number" min="1" style="width:100%">
+        <input class="opt" id="meat_sessMax" type="number" min="1" style="width:100%">
+      </div>
+    </div>
+    <div class="meta">
+      <span>Rounds</span>
+      <input class="opt" id="meat_rounds" type="number" min="1" max="10" style="width:100%">
+    </div>
+    <div class="meta">
+      <span>Break between rounds (min)</span>
+      <div class="row" style="margin:0;gap:4px">
+        <input class="opt" id="meat_pauseMin" type="number" min="0" style="width:100%">
+        <input class="opt" id="meat_pauseMax" type="number" min="0" style="width:100%">
+      </div>
+    </div>
     <button class="hud" id="meatApply" style="margin-top:6px">Apply meat timings</button>
     </div>
   </div>
@@ -88,6 +115,7 @@
     </div>
     <div class="meta">
       <label><input type="checkbox" id="woodAuto"> Autostart on reload</label>
+      <label><input type="checkbox" id="woodPan" checked> Auto-pan map</label>
     </div>
   </div>
 
@@ -120,6 +148,7 @@
   <button class="hud" id="captureFormat">Capture: fast (JPEG)</button>
   <button class="hud" id="hudToggle">Toggle in-page HUD</button>
   <div class="foot" id="foot"></div>
+  <div class="foot" id="ver"></div>
 
   <script src="popup.js"></script></body>
 </html>

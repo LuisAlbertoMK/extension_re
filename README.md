@@ -34,14 +34,15 @@ from a right-skewed distribution instead of a rectangle with hard edges.
 
 ## Tests
 
-Node only, no dependencies. Run from the repository root:
+Node only, no dependencies. Run everything from the repository root:
 
 ```
+npm test                            # every test file (tests/all.cjs)
 node tests/run.cjs                  # golden-file detector regression (meat, wood, res)
 node tests/meat_loop.cjs            # click burst, drag mode, stop mid-burst
+node tests/meat_policy.cjs          # 100% collection in the three modes
+node tests/meat_rounds.cjs          # 25 min + 5 min break + 30 min schedule
 node tests/control.cjs              # one chain at a time: stop/start/resume
-node tests/meat_stale_start_timer.cjs
-node tests/meat_policy.cjs          # 100% click-only pacing
 node tests/res_loop.cjs             # resource collector end to end
 node tests/res_pair.cjs             # two buildings per gather-time dialog
 node tests/res_round.cjs            # 16 assignments per round, then a 6-7 min pause
@@ -50,8 +51,11 @@ node tests/wood_loop.cjs            # empty map and capture errors never stop th
 node tests/wood_villager.cjs        # a villager that never cuts stops the module
 node tests/wood_nearest.cjs         # the trunk nearest to the villager is the one cut
 node tests/hud_ui.cjs               # HUD row buttons and calibration reporting
-node tests/hud_input.cjs            # synthetic mouse: movement deltas, screen coords, gap shape
+node tests/hud_input.cjs            # synthetic mouse: deltas, screen coords, gap shape
+node tests/hud_capture.cjs          # a timed-out capture cannot un-hide the HUD mid-frame
+node tests/background_drag.cjs      # a failed CDP drag still releases the mouse button
 node tests/config_persist.cjs       # popup choices survive a reload
+node tests/fetch_assets.cjs         # tools/fetch-assets.cjs against a fake page
 node tests/find_recipes.cjs         # tools/find-recipes.js against a fake page
 node tests/dump_data.cjs            # tools/dump-data.js against a fake page
 node tests/package.cjs              # the extension folder is a loadable package

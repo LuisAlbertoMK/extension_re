@@ -1,5 +1,6 @@
 // popup.js — minimal control surface for the three modules.
 const $ = (id) => document.getElementById(id);
+$('ver').textContent = 'v' + chrome.runtime.getManifest().version;
 
 async function activeTab() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -130,6 +131,9 @@ $('meatCal').addEventListener('click', async () => {
   } else if (r.error) {
     meatNote = { text: String(r.error).replace(/^Error:\s*/, ''), until: Date.now() + 12000 };
     meatCalibration = null; // never let a stale count outlive the failure message
+  } else if (typeof r.n === 'string') {
+    meatNote = { text: r.n, until: Date.now() + 12000 };
+    meatCalibration = null;
   } else {
     meatNote = null;
     meatCalibration = r.n;
@@ -160,8 +164,35 @@ $('meatApply').addEventListener('click', async () => {
     const v = Number($('meat_' + k).value);
     if (Number.isFinite(v) && v >= 0) cfg[k] = v;
   });
+  const m = (id) => Number($(id).value) * 60000;
+  const sMin = m('meat_sessMin'), sMax = m('meat_sessMax'), rounds = Math.floor(Number($('meat_rounds').value));
+  if (sMin > 0) { cfg.sessionMinMs = sMin; cfg.sessionMaxMs = sMax >= sMin ? sMax : sMin; }
+  if (rounds >= 1) cfg.rounds = Math.min(rounds, 10);
+  const pMin = m('meat_pauseMin'), pMax = m('meat_pauseMax');
+  if ($('meat_pauseMin').value !== '' && pMin >= 0) { cfg.roundPauseMinMs = pMin; cfg.roundPauseMaxMs = pMax >= pMin ? pMax : pMin; }
+  // Only touch the stored plan when the preset selector changed: a plain Apply must
+  // not wipe the 25/30 schedule with the flat round range.
+  if (planTouched) cfg.roundDurationsMs = (pendingRoundPlan || []).map(min => min * 60000);
   if (Object.keys(cfg).length) await send({ type: 'MEAT_CONFIG', config: cfg });
   refresh();
+});
+
+// Presets fill the session fields; Apply sends them. `plan` is the exact per-round
+// duration in minutes, so 25 + 5 + 30 stays 25 and 30 instead of a random range.
+const SESSION_PRESETS = {
+  def: { fields: [20, 30, 1, 5, 7] },
+  c45: { fields: [45, 45, 1, 5, 7] },
+  r2: { fields: [25, 30, 2, 5, 5], plan: [25, 30] }
+};
+let pendingRoundPlan = null;
+let planTouched = false;
+$('meatSession').addEventListener('change', (e) => {
+  const p = SESSION_PRESETS[e.target.value];
+  planTouched = true;
+  if (!p) { pendingRoundPlan = null; return; }
+  pendingRoundPlan = p.plan || null;
+  ['meat_sessMin', 'meat_sessMax', 'meat_rounds', 'meat_pauseMin', 'meat_pauseMax'].forEach((id, i) => { $(id).value = p.fields[i]; });
+  $('meatApply').click();
 });
 
 $('meatCustom').addEventListener('change', async (e) => {
@@ -177,6 +208,11 @@ $('meatCustom').addEventListener('change', async (e) => {
       $('meat_dragMaxDelay').value = c.dragMaxDelay;
       $('meat_clickDelayMin').value = c.clickDelayMin;
       $('meat_clickDelayMax').value = c.clickDelayMax;
+      $('meat_sessMin').value = Math.round(c.sessionMinMs / 60000);
+      $('meat_sessMax').value = Math.round(c.sessionMaxMs / 60000);
+      $('meat_rounds').value = c.rounds || 1;
+      $('meat_pauseMin').value = Math.round((c.roundPauseMinMs ?? 300000) / 60000);
+      $('meat_pauseMax').value = Math.round((c.roundPauseMaxMs ?? 420000) / 60000);
     }
   }
 });
@@ -243,6 +279,9 @@ chrome.storage.local.get(Object.values(AUTOSTART), (saved) => {
 for (const [id, key] of Object.entries(AUTOSTART)) {
   $(id).addEventListener('change', (e) => chrome.storage.local.set({ [key]: e.target.checked }));
 }
+
+chrome.storage.local.get(['woodAutoPan'], ({ woodAutoPan }) => { $('woodPan').checked = woodAutoPan !== false; });
+$('woodPan').addEventListener('change', (e) => chrome.storage.local.set({ woodAutoPan: e.target.checked }));
 
 setInterval(refresh, 1000);
 refresh();
