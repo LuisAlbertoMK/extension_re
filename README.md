@@ -6,6 +6,9 @@ Chrome extension plus a Node test harness for resource collection in **Social Re
 > Personal-use tooling for a single game. Automating gameplay may violate that game's
 > Terms of Service; use it on your own account and at your own risk.
 
+Branch layout and workflow: see [INSTRUCCIONES.md](INSTRUCCIONES.md). `main` ships wood
+and meat; `pruebas` also carries the resource collector, which is still under test.
+
 ## Modules
 
 | Module | What it does |

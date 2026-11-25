@@ -1,6 +1,8 @@
-// popup.js — minimal control surface for the three modules.
+// popup.js — minimal control surface for the modules of this branch.
 const $ = (id) => document.getElementById(id);
-$('ver').textContent = 'v' + chrome.runtime.getManifest().version;
+// Channel label: `main` ships wood + meat; `pruebas` also carries resources.
+const CHANNEL = 'pruebas';
+$('ver').textContent = `v${chrome.runtime.getManifest().version} (${CHANNEL})`;
 
 async function activeTab() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
