@@ -1,0 +1,9 @@
+{
+  "name": "extension-ser",
+  "version": "2.13.0",
+  "private": true,
+  "description": "Chrome extension and Node test harness for Social Reborn resource collection",
+  "scripts": {
+    "test": "node tests/all.cjs"
+  }
+}

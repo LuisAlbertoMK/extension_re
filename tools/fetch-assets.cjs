@@ -33,7 +33,8 @@ function localPath(out, url) {
   const rel = decodeURIComponent(u.pathname).replace(/^\/+/, '');
   const clean = path.normalize(rel).replace(/^(\.\.[/\\])+/, '');
   const full = path.join(out, clean);
-  return full.startsWith(path.resolve(out)) ? full : null;
+  const inside = path.relative(path.resolve(out), full);
+  return inside && !inside.startsWith('..') && !path.isAbsolute(inside) ? full : null;
 }
 
 async function fetchOne(url, out, force) {
@@ -136,6 +137,6 @@ async function main() {
   process.exit(failures.length ? 1 : 0);
 }
 
-main();
+main().catch((e) => { console.error(e && e.message ? e.message : e); process.exit(1); });
 
 

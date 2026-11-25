@@ -1,9 +1,10 @@
 {
   "manifest_version": 3,
   "name": "Social Reborn Toolkit",
-  "version": "2.8.0",
+  "version": "2.13.0",
   "description": "Meat, wood and resource-bubble collection for Social Reborn (WebGL canvas)",
-  "permissions": ["storage", "activeTab", "tabs", "debugger"],
+  "minimum_chrome_version": "102",
+  "permissions": ["storage", "debugger"],
   "host_permissions": ["https://empires.socialreborn.com/*"],
   "content_scripts": [{
     "matches": ["https://empires.socialreborn.com/*"],
@@ -21,6 +22,7 @@
       "description": "Stop every module (panic button, works in fullscreen)"
     }
   },
+  "icons": { "16": "icons/icon16.png", "48": "icons/icon48.png", "128": "icons/icon128.png" },
   "action": {
     "default_popup": "popup.html",
     "default_icon": { "16": "icons/icon16.png", "48": "icons/icon48.png", "128": "icons/icon128.png" }
