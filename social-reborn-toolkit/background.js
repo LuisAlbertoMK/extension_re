@@ -53,8 +53,18 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       // Chrome defines runtime.lastError only inside the callback that produced it, so
       // read it once and keep a plain string.
       const e = chrome.runtime.lastError;
-      if (e) sendResponse({ error: e.message });
-      else sendResponse({ dataUrl });
+      if (!e) {
+        sendResponse({ dataUrl });
+        return;
+      }
+      // captureVisibleTab needs <all_urls> or activeTab, and host_permissions alone are
+      // not enough. activeTab is granted by a user invocation (the toolbar icon), so say
+      // that instead of the raw permission error.
+      if (/all_urls|activeTab/i.test(e.message || '')) {
+        sendResponse({ error: 'capture permission missing: click the extension icon once on this tab, then retry' });
+        return;
+      }
+      sendResponse({ error: e.message });
     });
     return true;
   }

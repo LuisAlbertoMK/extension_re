@@ -28,6 +28,10 @@ assert(scripts.every((s) => fs.existsSync(path.join(ROOT, s))), `every popup scr
 
 assert(/^\d+\.\d+\.\d+$/.test(manifest.version), `the version is a Chrome-accepted semver (${manifest.version})`);
 assert(manifest.permissions.includes('debugger'), 'the debugger permission survived the cleanup');
+// captureVisibleTab refuses to run with host permissions alone: Chrome requires
+// <all_urls> or activeTab, and the whole extension is built on that capture.
+assert(manifest.permissions.includes('activeTab'),
+  'the activeTab permission is present (captureVisibleTab needs it)');
 assert(fs.existsSync(path.join(ROOT, 'content', 'hud.js')), 'the HUD content script is present');
 assert(fs.existsSync(path.join(ROOT, 'icons', 'icon128.png')), 'the shipped icons are present');
 

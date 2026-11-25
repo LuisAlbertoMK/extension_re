@@ -26,6 +26,12 @@ per-module autostart-on-reload and the capture format. Input is synthesized
 (`isTrusted: false`) by default; debugger mode uses CDP and raises Chrome's "started
 debugging this browser" infobar.
 
+Permissions: `storage`, `activeTab` and `debugger`, plus host access to the game origin.
+`activeTab` is not optional — `chrome.tabs.captureVisibleTab` refuses to run with host
+permissions alone, and every detector is built on that capture. It is granted when you
+invoke the extension on the tab (toolbar icon or a keyboard shortcut), so if calibration
+reports a missing capture permission, click the toolbar icon once and retry.
+
 Nothing below is a promise of invisibility: `isTrusted` is `false` in synthetic mode and a
 page can read it. What the input layer does do is stop being *trivially* distinguishable —
 cursor paths are eased curves, every move carries real `movementX`/`movementY` deltas,
