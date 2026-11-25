@@ -69,6 +69,14 @@ buttons(f.d, 380, 2);          // a single row of two
 r = T.detect({ width: W, height: H, _data: f.d });
 assert(!r.dialog, 'one row of buttons is not a dialog');
 
+// --- a 2x2 grid with one button covered is still a dialog -----------------
+// The cursor can sit on one of the four buttons; three of them in two rows are enough.
+f = base(W, H, 10);
+buttons(f.d, 380, 3);          // two in the top row, one in the bottom
+r = T.detect({ width: W, height: H, _data: f.d });
+assert(!!r.dialog, 'three buttons in two rows are still a dialog');
+assert(!!r.dialog && !!r.dialog.target, 'the covered grid still has a target');
+
 // --- a stuck dialog is closed with Escape --------------------------------
 keys.length = 0;
 T.closeDialog();

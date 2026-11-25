@@ -34,7 +34,11 @@
     btnWMin: 80, btnWMax: 140, btnHMin: 20, btnHMax: 40, // botón "Elegir" (px)
     // Hard session cap, same anti-bot model as the meat and wood modules.
     sessionMinMs: 20 * 60 * 1000,
-    sessionMaxMs: 30 * 60 * 1000
+    sessionMaxMs: 30 * 60 * 1000,
+    // captureVisibleTab allows ~2 calls/second and fails above that. Every capture waits
+    // for this floor: the dialog polls used to ask for 2.8-3.3/s, so part of the captures
+    // failed and the cycle aborted mid-dialog (the "half the bubbles work" symptom).
+    captureMinMs: 520
   };
 
   let running = false, timer = null, status = 'idle';
@@ -250,17 +254,20 @@
     const grid = btns.filter(b =>
       b.x >= innerWidth * 0.05 && b.x <= innerWidth * 0.95 &&
       b.y >= innerHeight * 0.12 && b.y <= innerHeight * 0.90);
-    if (grid.length >= 4) {
+    if (grid.length >= 3) {
       const rows = [];
       for (const b of grid.sort((a, b) => a.y - b.y)) {
         const row = rows.find(r => Math.abs(r.y - b.y) <= 30);
         if (row) row.items.push(b); else rows.push({ y: b.y, items: [b] });
       }
-      const two = rows.filter(r => r.items.length >= 2);
-      if (two.length >= 2) {
-        two.sort((a, b) => a.y - b.y);
-        const top = two[0].items.slice().sort((a, b) => a.x - b.x);
-        const bot = two[1].items.slice().sort((a, b) => a.x - b.x);
+      const dense = rows.filter(r => r.items.length >= 2);
+      // A 2x2 dialog whose fourth button is covered by the cursor still counts: three
+      // buttons in two adjacent rows are a grid, two buttons in one row are not.
+      const topRow = dense[0];
+      const botRow = topRow && rows.find(r => r.y > topRow.y && r.y - topRow.y <= 200);
+      if (topRow && botRow && topRow.items.length + botRow.items.length >= 3) {
+        const top = topRow.items.slice().sort((a, b) => a.x - b.x);
+        const bot = botRow.items.slice().sort((a, b) => a.x - b.x);
         const row = CFG.option >= 2 ? bot : top;
         // The dialog's own ✕ sits above-right of the top-right "Elegir" button. A
         // synthetic Escape is untrusted and the game may ignore it, so this is the
@@ -276,7 +283,14 @@
 
   // The bubble test needs white >= 243, so this module always asks for a lossless PNG
   // capture: JPEG chroma subsampling pushes border pixels below that threshold.
+  // Every capture goes through the same rate floor (CFG.captureMinMs). Chrome drops the
+  // call that exceeds 2/s, and a dropped capture used to throw out of the dialog poll.
+  let lastCaptureAt = 0;
+
   async function capture() {
+    const wait = lastCaptureAt + CFG.captureMinMs - Date.now();
+    if (wait > 0) await sleep(wait);
+    lastCaptureAt = Date.now();
     const hud = window.__SRToolkit;
     return hud
       ? hud.captureClean({ format: 'png' })
@@ -307,17 +321,20 @@
   }
 
   // Polls until the gather-time dialog shows up (it can lag after the building click).
-  // The poll interval is the real speed knob: the dialog is usually up in ~300-600 ms,
-  // so waiting a fixed second would only add dead time.
+  // The capture floor inside capture() is the real speed knob; this only adds a small
+  // pause on top so a slow frame is not asked for twice in a row.
   async function waitForDialog(ms, alive) {
     const end = Date.now() + ms;
     while (alive()) {
-      const r = await scan();
-      if (r.dialog) return r;
+      let r = null;
+      try {
+        r = await scan();
+      } catch {
+        // A dropped capture is not "there is no dialog": keep polling until the window
+        // closes instead of aborting the whole cycle and losing the bubble.
+      }
+      if (r && r.dialog) return r;
       if (Date.now() >= end) return null;
-      // captureVisibleTab is capped at ~2/s; polling every 150 ms queued captures
-      // faster than Chrome allows and the failures left the dialog unhandled half the
-      // time. 350 ms stays well under the cap and is still fast enough.
       await sleep(350);
     }
     return null;
@@ -326,23 +343,22 @@
   // A dialog that will not close is worse than a missed assignment: every later click
   // lands inside it and the collector keeps hammering the same spot. Escape is the only
   // way out that does not risk committing a duration we did not choose.
-  async function closeDialog(dialog) {
-    // Prefer the dialog's own ✕ (computed from the button grid): the game may ignore a
-    // synthetic Escape, which left the dialog open and every later click inside it.
-    const close = dialog && dialog.close;
-    const input = window.__SRToolkit?.input;
-    if (close && input) {
-      // A click that throws must still fall through to Escape, so this is a try/catch
-      // rather than a promise .catch (the shim's click may not return a promise).
-      try { await input.click(Math.round(close.x), Math.round(close.y)); } catch { /* fall back */ }
-      return;
-    }
+  async function closeDialog(dialog, alive) {
+    // Escape first: a synthetic key cannot click anything in the game world, so a wrong
+    // guess is free. Only a dialog that survives it gets the X computed from the button
+    // grid - clicking that coordinate blind could otherwise open another building.
     const ev = { key: 'Escape', code: 'Escape', keyCode: 27, which: 27, bubbles: true, cancelable: true };
     try {
       const target = document.activeElement || document.body || document;
       target.dispatchEvent(new KeyboardEvent('keydown', ev));
       target.dispatchEvent(new KeyboardEvent('keyup', ev));
     } catch { /* no KeyboardEvent in this frame */ }
+    const close = dialog && dialog.close;
+    const input = window.__SRToolkit?.input;
+    if (!close || !input) return;
+    const still = await waitForDialog(700, alive || (() => true));
+    if (!still) return;
+    try { await input.click(Math.round(close.x), Math.round(close.y)); } catch { /* ignore */ }
   }
 
   // Picks the gather time on the dialog. Only the configured button is ever clicked
@@ -448,7 +464,7 @@
         } else if (++dialogFails >= 3) {
           // Give up on this dialog and clear it, so the next cycle starts on a clean map
           // instead of clicking into the same stale window.
-          closeDialog(r.dialog);
+          await closeDialog(r.dialog, alive);
           selected = [];
           lastError = 'cannot pick the gather time (check Calibrate)';
           break;

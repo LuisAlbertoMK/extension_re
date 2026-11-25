@@ -113,6 +113,7 @@ const T = shim.load('resources.js',
 
 Object.assign(T.CFG, {
   cycMin: 20, cycMax: 20, gapMin: 0, gapMax: 0, selMin: 0, selMax: 0,
+  captureMinMs: 0,   // the rate floor is for Chrome's real 2/s cap, not for the shim
 });
 
 const wait = (ms) => new Promise(r => setTimeout(r, ms));
