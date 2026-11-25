@@ -33,8 +33,16 @@
     runPauseMin: 3000,
     runPauseMax: 7000,
     // Hard session cap: the collector stops itself after a random 20-30 minutes.
+    // Ignored for a round when roundDurationsMs has an entry for it.
     sessionMinMs: 20 * 60 * 1000,
     sessionMaxMs: 30 * 60 * 1000,
+    // Per-round durations (ms), indexed by round number. Default schedule:
+    // 25 min, a 5 min break, then 30 min.
+    roundDurationsMs: [25 * 60 * 1000, 30 * 60 * 1000],
+    // Rounds: how many sessions run back to back, with a break between them.
+    rounds: 2,
+    roundPauseMinMs: 5 * 60 * 1000,
+    roundPauseMaxMs: 5 * 60 * 1000,
     // Anti-bot: delay before the first click. A range, not a constant: a fixed delay
     // before every single run is its own signature.
     preClickDelayMin: 180,
@@ -110,6 +118,9 @@
   let lastTargets = [];    // last detection, used to repaint after a viewport change
   let sessionEndsAt = 0;   // wall-clock deadline for the current run
   let sessionStartedAt = 0; // used to drift the drag/click mix across the session
+  let roundsLeft = 0;      // extra rounds still to run after the current one
+  let breakUntil = 0;      // > now while resting between rounds
+  let roundNo = 1;
   let zeroStreak = 0;      // consecutive cycles that detected nothing
   let stopReason = '';
   const stats = { collected: 0, cycles: 0, lastFound: 0 };
@@ -121,7 +132,10 @@
   // Anti-bot: history of clicked positions (last 4 cycles)
   const clickHistory = []; // array of arrays of "x,y" strings
   const MAX_HISTORY = 4;
-  const MAX_REPEATS = 4; // max consecutive clicks on the same position
+  // Every detected icon is collected in all three modes (mixed, click, drag). The
+  // history holds at most MAX_HISTORY cycles, so a cap above it never skips a target;
+  // the skip was dropping respawned icons at the same spot.
+  const MAX_REPEATS = MAX_HISTORY + 1;
 
   // Anti-bot: pause when the tab is not visible
   let isTabVisible = !document.hidden;
@@ -254,22 +268,25 @@
 
           // STEP 2: for each white region, check whether it contains red inside
           const validIcons = [];
+          // Why white regions were rejected, so a 0-result calibration says what to tune.
+          const rej = { tiny: 0, small: 0, large: 0, aspect: 0, redLow: 0, redHigh: 0, border: 0 };
 
           for (const region of whiteRegions) {
             const { minX, minY, maxX, maxY } = region;
             const boxW = maxX - minX + 1;
             const boxH = maxY - minY + 1;
 
-            if (boxW < CONFIG.minBoxSize || boxH < CONFIG.minBoxSize) continue;
-            if (boxW > CONFIG.maxBoxSize || boxH > CONFIG.maxBoxSize) continue;
+            if (boxW < 8 || boxH < 8) { rej.tiny++; continue; }
+            if (boxW < CONFIG.minBoxSize || boxH < CONFIG.minBoxSize) { rej.small++; continue; }
+            if (boxW > CONFIG.maxBoxSize || boxH > CONFIG.maxBoxSize) { rej.large++; continue; }
 
             // Aspect ratio (should be roughly square)
             const aspect = boxW / boxH;
-            if (aspect < 0.6 || aspect > 1.7) continue;
+            if (aspect < 0.6 || aspect > 1.7) { rej.aspect++; continue; }
 
             const redInside = countRed(minX, minY, maxX, maxY);
-            if (redInside < CONFIG.minRedPixelsInside) continue;
-            if (redInside > CONFIG.maxRedPixelsInside) continue;
+            if (redInside < CONFIG.minRedPixelsInside) { rej.redLow++; continue; }
+            if (redInside > CONFIG.maxRedPixelsInside) { rej.redHigh++; continue; }
 
             // The bounding box border must be mostly white
             let borderWhite = 0;
@@ -285,7 +302,7 @@
               }
             }
             const borderRatio = borderTotal > 0 ? borderWhite / borderTotal : 0;
-            if (borderRatio < CONFIG.minWhiteBorderRatio) continue;
+            if (borderRatio < CONFIG.minWhiteBorderRatio) { rej.border++; continue; }
 
             const centerX = Math.round((minX + maxX) / 2);
             const centerY = Math.round((minY + maxY) / 2);
@@ -337,6 +354,8 @@
           resolve({
             whiteRegionCount: whiteRegions.length,
             validCount: validIcons.length,
+            rej,
+            screenshot: [w, h],
             targets: canvasTargets
           });
         } catch (e) {
@@ -667,10 +686,11 @@
     usedDragThisCycle = false;
     const my = ++loopToken;
     lastError = '';
-    // Random 20-30 minute cap, so the account is never farming for hours on end.
-    const cap = CONFIG.sessionMinMs + Math.random() * (CONFIG.sessionMaxMs - CONFIG.sessionMinMs);
-    sessionEndsAt = Date.now() + cap;
-    sessionStartedAt = Date.now();
+    // Round 1 starts now; the schedule (roundDurationsMs) decides each round's length.
+    const planned = Array.isArray(CONFIG.roundDurationsMs) ? CONFIG.roundDurationsMs.length : 0;
+    roundsLeft = Math.max(0, Math.floor(Math.max(CONFIG.rounds || 1, planned)) - 1);
+    roundNo = 1; breakUntil = 0;
+    beginRound();
     window.__SRToolkit?.show(true);
 
     if (!isTabVisible) {
@@ -702,7 +722,21 @@
     }
   });
 
+  // Picks the length of the current round (random between min and max, so min = max
+  // gives an exact duration) and restarts the drift clock.
+  function beginRound() {
+    const plan = CONFIG.roundDurationsMs;
+    const fixed = Array.isArray(plan) ? plan[roundNo - 1] : undefined;
+    const lo = CONFIG.sessionMinMs, hi = Math.max(lo, CONFIG.sessionMaxMs);
+    const len = Number.isFinite(fixed) && fixed > 0
+      ? fixed
+      : lo + Math.random() * (hi - lo);
+    sessionEndsAt = Date.now() + len;
+    sessionStartedAt = Date.now();
+  }
+
   function stop(reason) {
+    breakUntil = 0;
     running = false;
     loopToken++; // invalidate any callback that is already queued
     stopReason = reason || '';
@@ -719,8 +753,32 @@
     // A cycle is already in flight: it owns the chain and reschedules when it ends.
     if (cycleBusy) return;
     nextCollectionTime = null; // the countdown is over; the run is starting now
-    if (Date.now() >= sessionEndsAt) {
+    if (breakUntil && breakUntil > Date.now()) {
+      // Woken early (e.g. the tab became visible again): keep resting.
+      armTimer(my, breakUntil - Date.now());
+      return;
+    }
+    if (!breakUntil && Date.now() >= sessionEndsAt) {
+      if (roundsLeft > 0) {
+        // Round finished: rest, then start the next one. The timer wakes the loop at the
+        // end of the break, which begins the new round with the usual start delay.
+        roundsLeft--; roundNo++;
+        const rest = CONFIG.roundPauseMinMs + Math.random() * Math.max(0, CONFIG.roundPauseMaxMs - CONFIG.roundPauseMinMs);
+        breakUntil = Date.now() + rest;
+        nextCollectionTime = null;
+        armTimer(my, rest);
+        return;
+      }
       stop('session cap reached');
+      return;
+    }
+    if (breakUntil) {
+      // Break over: new round, with the same idle start as a fresh session.
+      breakUntil = 0;
+      beginRound();
+      const wait = gap(CONFIG.startDelayMin, CONFIG.startDelayMax);
+      nextCollectionTime = Date.now() + wait;
+      armTimer(my, wait);
       return;
     }
     cycleBusy = true;
@@ -821,6 +879,25 @@
 
     const result = await analyzeScreenshot(response.dataUrl);
     drawOverlay(result.targets);
+    if (result.targets.length) return result.targets.length;
+    // Nothing found: say why instead of a bare 0 (white boxes seen / rejected by reason).
+    const r = result.rej || {};
+    const parts = Object.entries(r).filter(([, v]) => v).map(([k, v]) => `${k}:${v}`).join(' ');
+    return `0 found · ${result.whiteRegionCount} white · ${parts || 'none rejected'}`;
+  }
+
+  // Diagnostic dump: lossless frame + analysis JSON (config, reject reasons, targets).
+  async function exportFrame() {
+    const response = await capture('png');
+    if (!response || response.error) throw new Error((response && response.error) || 'capture returned nothing');
+    const result = await analyzeScreenshot(response.dataUrl);
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const save = (href, name) => { const a = document.createElement('a'); a.href = href; a.download = name; document.body.appendChild(a); a.click(); a.remove(); };
+    save(response.dataUrl, `sr-meat-${stamp}.png`);
+    const blob = new Blob([JSON.stringify({ at: stamp, viewport: [innerWidth, innerHeight, devicePixelRatio], cfg: CONFIG, result }, null, 1)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    save(url, `sr-meat-${stamp}.json`);
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
     return result.targets.length;
   }
 
@@ -889,6 +966,9 @@
     getStatus() {
       const base = `${stats.collected}c · ${stats.cycles}cy`;
       if (running) {
+        if (breakUntil > Date.now()) {
+          return { running, text: `${base} · break ${Math.ceil((breakUntil - Date.now()) / 60000)}m · round ${roundNo}` };
+        }
         const leftMin = Math.max(0, Math.ceil((sessionEndsAt - Date.now()) / 60000));
         if (nextCollectionTime) {
           const secs = Math.max(0, Math.ceil((nextCollectionTime - Date.now()) / 1000));
@@ -900,6 +980,7 @@
     },
     toggle() { running ? stop() : start(); },
     calibrate() { return calibrate(); },
+    exportFrame() { return exportFrame(); },
     redraw() { if (liveOverlay) drawOverlay(lastTargets); }
   });
 
